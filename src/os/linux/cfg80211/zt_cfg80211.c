@@ -1390,36 +1390,54 @@ static zt_s32 _cfg80211_change_iface(struct wiphy *wiphy,
 
 void zt_cfg80211_scan_done_event_up(nic_info_st *pnic_info, zt_bool babort)
 {
-    struct zt_widev_priv *pwdev_info = pnic_info->widev_priv;
+    struct zt_widev_priv *pwdev_info;
+    struct cfg80211_scan_request *req = NULL;
+    zt_bool notify = zt_false;
 #if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
     struct cfg80211_scan_info info;
+#endif
 
+    if (pnic_info == NULL || pnic_info->widev_priv == NULL)
+    {
+        return;
+    }
+
+    pwdev_info = pnic_info->widev_priv;
+#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
     zt_memset(&info, 0, sizeof(info));
     info.aborted = babort;
 #endif
+
+    mutex_lock(&pwdev_info->scan_req_mutex);
     zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
-    if (pwdev_info->pscan_request != NULL)
+    req = pwdev_info->pscan_request;
+    pwdev_info->pscan_request = NULL;
+    pwdev_info->scan_req_finalizing = zt_false;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    if (req != NULL && req->wiphy == pnic_info->pwiphy)
     {
-        LOG_W("[%s]: with scan req", __func__);
-        if (pwdev_info->pscan_request->wiphy == pnic_info->pwiphy)
-        {
-#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
-            cfg80211_scan_done(pwdev_info->pscan_request, &info);
-#else
-            cfg80211_scan_done(pwdev_info->pscan_request, babort);
-#endif
-        }
-        else
-        {
-            LOG_W("[%s]: wrong compare", __func__);
-        }
-        pwdev_info->pscan_request = NULL;
+        notify = zt_true;
+    }
+    else if (req != NULL)
+    {
+        LOG_W("[%s]: scan request wiphy mismatch", __func__);
     }
     else
     {
-        LOG_W("[%s]: scan req is NULL", __func__);
+        LOG_W("[%s]: scan request is NULL", __func__);
     }
-    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    /* cfg80211 may release the request in this callback: never hold the spinlock. */
+    if (notify)
+    {
+#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
+        cfg80211_scan_done(req, &info);
+#else
+        cfg80211_scan_done(req, babort);
+#endif
+    }
+    mutex_unlock(&pwdev_info->scan_req_mutex);
 }
 
 static zt_u64 cfg80211_get_timestamp_us(void)
@@ -4443,7 +4461,9 @@ zt_s32 zt_cfg80211_alloc(nic_info_st *pnic_info)
     pwidev_priv->ifname_mon[0]  = '\0';
     pwidev_priv->pnic_info      = pnic_info;
     pwidev_priv->pscan_request  = NULL;
+    pwidev_priv->scan_req_finalizing = zt_false;
     zt_os_api_lock_init(&pwidev_priv->scan_req_lock, ZT_LOCK_TYPE_BH);
+    mutex_init(&pwidev_priv->scan_req_mutex);
     pwidev_priv->power_mgmt     = zt_false;
 
     pwidev_priv->bandroid_scan = zt_true;

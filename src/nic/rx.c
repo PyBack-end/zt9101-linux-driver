@@ -951,9 +951,28 @@ zt_s32 zt_rx_common_process(prx_pkt_t ppkt)
     mlme_info_t *mlme_info = pnic_info->mlme_info;
     wdn_net_info_st *pwdn_info;
 
+    /*
+     * Authentication responses are resolved by transmitter address (TA).
+     * Keep the lookup visible while diagnosing association/authentication
+     * failures; a missing WDN entry prevents auth_sta_recv() from queuing
+     * the response for the authentication state machine.
+     */
+    if (zt_80211_hdr_type_get(ppkt->pdata) == ZT_80211_FRM_AUTH)
+    {
+        LOG_I("[AUTH-RX] TA="ZT_MAC_FMT" RA="ZT_MAC_FMT" BSSID="ZT_MAC_FMT,
+              ZT_MAC_ARG(get_ta(ppkt->pdata)),
+              ZT_MAC_ARG(get_ra(ppkt->pdata)),
+              ZT_MAC_ARG(zt_80211_hdr_addr3(ppkt->pdata)));
+    }
+
     /* retrive wdn_info */
     pwdn_info = zt_wdn_find_info(ppkt->p_nic_info, get_ta(ppkt->pdata));
     ppkt->wdn_info = pwdn_info;
+
+    if (zt_80211_hdr_type_get(ppkt->pdata) == ZT_80211_FRM_AUTH)
+    {
+        LOG_I("[AUTH-RX] WDN=%p", pwdn_info);
+    }
 
     if (pwdn_info != NULL)
     {

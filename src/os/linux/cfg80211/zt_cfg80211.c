@@ -2094,40 +2094,76 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
     zt_u8 scan_time_for_one_ch = 6;
     zt_u8 scan_time = 3;
     zt_u8 social_channel = 0, ext_channel = 0;
-    zt_u8 req_ch_nums    = req->n_channels;
+    zt_u8 req_ch_nums = 0;
 
     CFG80211_DBG("scan start!");
 
     if (req == NULL)
     {
-        ret = -EINVAL;
-        return ret;
+        return -EINVAL;
     }
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0))
-    if (ndev == NULL)
-    {
-        ret = -EINVAL;
-        return ret;
-    }
-#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0))
+    if (req->wdev == NULL || req->wdev->netdev == NULL)
+    {
+        return -EINVAL;
+    }
     ndev = req->wdev->netdev;
 #endif
 
+    if (ndev == NULL || req->n_channels == 0 ||
+        req->n_channels > ZT_SCAN_REQ_CHANNEL_NUM || req->channels == NULL ||
+        req->n_ssids > ZT_SCAN_REQ_SSID_NUM ||
+        (req->n_ssids != 0 && req->ssids == NULL) ||
+        (req->ie_len != 0 && req->ie == NULL))
+    {
+        return -EINVAL;
+    }
+
+    for (i = 0; i < req->n_channels; i++)
+    {
+        if (req->channels[i] == NULL)
+        {
+            return -EINVAL;
+        }
+    }
+
+    for (i = 0; i < req->n_ssids; i++)
+    {
+        if (req->ssids[i].ssid_len > IEEE80211_MAX_SSID_LEN)
+        {
+            return -EINVAL;
+        }
+    }
+
+    req_ch_nums = req->n_channels;
     pndev_priv = netdev_priv(ndev);
+    if (pndev_priv == NULL || pndev_priv->nic == NULL)
+    {
+        return -EINVAL;
+    }
     pnic_info = pndev_priv->nic;
+    pwdev_info = pnic_info->widev_priv;
+    if (pwdev_info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    if (pwdev_info->pscan_request != NULL)
+    {
+        zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+        return -EBUSY;
+    }
+    pwdev_info->pscan_request = req;
+    pwdev_info->scan_req_finalizing = zt_false;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
 
     CFG80211_INFO("[%d] mac addr: "ZT_MAC_FMT, pnic_info->ndev_id,
                   ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
 
     pmlme_info = (mlme_info_t *)pnic_info->mlme_info;
     pscan_info = pnic_info->scan_info;
-    pwdev_info = pnic_info->widev_priv;
-    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
-    pwdev_info->pscan_request = req;
-    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
 
     if (pnic_info->buddy_nic)
     {

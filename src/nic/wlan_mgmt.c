@@ -165,6 +165,17 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
 {
     zt_80211_mgmt_t *pmgmt;
     zt_u32 mgmt_len;
+    zt_u8 *pele_start, *pele_end;
+    zt_80211_mgmt_ie_t *pie;
+    zt_80211_mgmt_dsss_parameter_t *pdsss_para;
+    zt_80211_mgmt_ht_operation_t *pht_oper;
+    zt_u8 support_rate_cnt = 0;
+    zt_80211_mgmt_ht_cap_t *pht_cap;
+    zt_u8 i;
+    zt_bool cck_spot = zt_false, ofdm_spot = zt_false;
+    zt_u8 wpa_oui[4] = {0x0, 0x50, 0xf2, 0x01};
+    zt_u8 wps_oui[4] = {0x0, 0x50, 0xf2, 0x04};
+    zt_80211_frame_e frame_type;
     const zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
     const zt_u32 beacon_ie_offset =
         ZT_OFFSETOF(zt_80211_mgmt_t, beacon.variable);
@@ -178,17 +189,6 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
 
     pmgmt = (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm;
     mgmt_len = frm_msg_len - frame_offset;
-    zt_u8 *pele_start, *pele_end;
-    zt_80211_mgmt_ie_t *pie;
-    zt_80211_mgmt_dsss_parameter_t *pdsss_para;
-    zt_80211_mgmt_ht_operation_t *pht_oper;
-    zt_u8 support_rate_cnt = 0;
-    zt_80211_mgmt_ht_cap_t *pht_cap;
-    zt_u8 i;
-    zt_bool cck_spot = zt_false, ofdm_spot = zt_false;
-    zt_u8 wpa_oui[4] = {0x0, 0x50, 0xf2, 0x01};
-    zt_u8 wps_oui[4] = {0x0, 0x50, 0xf2, 0x04};
-    zt_80211_frame_e frame_type;
 
     NODE_INFO_DBG("----------------------------");
 
@@ -228,8 +228,21 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
         if (zt_p2p_is_valid(pnic_info))
         {
             p2p_info_st *p2p_info = pnic_info->p2p;
-            if (!zt_memcmp(&pmgmt->beacon.variable[2],
-                           p2p_info->p2p_wildcard_ssid, P2P_WILDCARD_SSID_LEN))
+            zt_u32 variable_len = mgmt_len - beacon_ie_offset;
+
+            /*
+             * The mesh/P2P fast path expects the first IE to be the complete
+             * wildcard SSID. Validate its header and payload before comparing.
+             */
+            if (variable_len >= ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) &&
+                    pmgmt->beacon.variable[0] == ZT_80211_MGMT_EID_SSID &&
+                    pmgmt->beacon.variable[1] >= P2P_WILDCARD_SSID_LEN &&
+                    pmgmt->beacon.variable[1] <=
+                        variable_len - ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) &&
+                    !zt_memcmp(&pmgmt->beacon.variable[
+                                   ZT_OFFSETOF(zt_80211_mgmt_ie_t, data)],
+                               p2p_info->p2p_wildcard_ssid,
+                               P2P_WILDCARD_SSID_LEN))
             {
                 NODE_INFO_DBG(" This is a p2p device role = %d", p2p_info->role);
             }

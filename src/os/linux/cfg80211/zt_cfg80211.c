@@ -1880,8 +1880,9 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
     zt_wlan_mgmt_scan_que_node_t *pscan_que_node = NULL;
     zt_wlan_mgmt_scan_que_for_rst_e scan_que_for_rst;
 
-    struct zt_widev_priv *pwdev_info = pnic_info->widev_priv;
-    struct cfg80211_scan_request *req = pwdev_info->pscan_request;
+    struct zt_widev_priv *pwdev_info;
+    struct cfg80211_scan_request *req = NULL;
+    zt_bool already_finalizing = zt_false;
 
     zt_u8 ch_num = 0;
     p2p_info_st *p2p_info = NULL;
@@ -1890,6 +1891,24 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
     zt_wlan_ssid_t ssids[1];
     zt_s32 p2p_scan_ssid_found = 0;
     zt_s32 p2p_scan_ssid_search = 0;
+
+    if (pnic_info == NULL || pnic_info->widev_priv == NULL)
+    {
+        return 0;
+    }
+
+    pwdev_info = pnic_info->widev_priv;
+    mutex_lock(&pwdev_info->scan_req_mutex);
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    req = pwdev_info->pscan_request;
+    already_finalizing = pwdev_info->scan_req_finalizing;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    if (req == NULL || already_finalizing)
+    {
+        mutex_unlock(&pwdev_info->scan_req_mutex);
+        return 0;
+    }
 
     CFG80211_DBG("[%d] scan complete", pnic_info->ndev_id);
 
@@ -1978,6 +1997,7 @@ INFORM_BSS:
             p2p_info->scan_times++;
             CFG80211_WARN("[%d] scan times : %d, ret : %d", pnic_info->ndev_id, p2p_info->scan_times, ret);
             if(!ret){
+                mutex_unlock(&pwdev_info->scan_req_mutex);
                 return 0;
             }else{
                 p2p_info->scan_times = 0;
@@ -1986,6 +2006,14 @@ INFORM_BSS:
             p2p_info->scan_times = 0;
         }
     }
+
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    if (pwdev_info->pscan_request == req)
+    {
+        pwdev_info->scan_req_finalizing = zt_true;
+    }
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+    mutex_unlock(&pwdev_info->scan_req_mutex);
 
     return 1;
 

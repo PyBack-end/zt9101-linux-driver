@@ -867,6 +867,7 @@ void zt_cfg80211_wiphy_free(nic_info_st *pnic_info)
 void zt_cfg80211_widev_free(nic_info_st *pnic_info)
 {
     struct wireless_dev *pwidev;
+    struct net_device *ndev;
 
     if (NULL == pnic_info)
     {
@@ -874,11 +875,12 @@ void zt_cfg80211_widev_free(nic_info_st *pnic_info)
     }
 
     pwidev = pnic_info->pwidev;
+    ndev = (struct net_device *)pnic_info->ndev;
     if (pwidev)
     {
-        if (pnic_info->ndev && pnic_info->ndev->ieee80211_ptr == pwidev)
+        if (ndev && ndev->ieee80211_ptr == pwidev)
         {
-            pnic_info->ndev->ieee80211_ptr = NULL;
+            ndev->ieee80211_ptr = NULL;
         }
         zt_kfree(pwidev);
         pnic_info->pwidev = NULL;

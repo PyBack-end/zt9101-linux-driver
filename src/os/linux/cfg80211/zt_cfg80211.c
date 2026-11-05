@@ -52,8 +52,25 @@ struct cfg80211_crypt
     zt_u8 set_tx;
     zt_u8 idx;
     zt_u16 key_len;
-    zt_u8 key[0];
+    zt_u8 key[];
 } ;
+
+static zt_bool cfg80211_key_len_valid(zt_u32 cipher, zt_u32 key_len)
+{
+    switch (cipher)
+    {
+        case WLAN_CIPHER_SUITE_WEP40:
+            return key_len == 5;
+        case WLAN_CIPHER_SUITE_WEP104:
+            return key_len == 13;
+        case WLAN_CIPHER_SUITE_TKIP:
+            return key_len == 32;
+        case WLAN_CIPHER_SUITE_CCMP:
+            return key_len == 16;
+        default:
+            return zt_false;
+    }
+}
 
 zt_s32 zt_cfg80211_p2p_rx_mgmt(void *nic_info, void *param, zt_u32 param_len);
 zt_s32 zt_cfg80211_remain_on_channel_expired(void *nic, void *param,
@@ -497,8 +514,9 @@ static zt_s32 cfg80211_ap_set_encryption(nic_info_st *pnic_info,
 
     CFG80211_DBG();
 
-    if (param_len <
-            ZT_FIELD_SIZEOF(struct cfg80211_crypt, key) + param->key_len)
+    if (param == NULL ||
+            param_len != ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len ||
+            !cfg80211_key_len_valid(param->alg, param->key_len))
     {
         CFG80211_WARN("param_len invalid !!!!!!!");
         res = -EINVAL;
@@ -719,10 +737,11 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
 
     CFG80211_DBG();
 
-    if (param_len !=
-            ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len)
+    if (param == NULL ||
+            param_len != ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len ||
+            !cfg80211_key_len_valid(param->alg, param->key_len))
     {
-        CFG80211_WARN("param_len invalid !!!!!!!");
+        CFG80211_WARN("invalid key parameters");
         res = -EINVAL;
         goto exit;
     }
@@ -784,21 +803,25 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
                 zt_memcpy(pwdn_info->dot118021x_UncstKey.skey, param->key,
                           min_t(zt_u16, param->key_len, 16));
 
-                if (param->alg == WLAN_CIPHER_SUITE_TKIP) /* set mic key */
+                if (param->alg == WLAN_CIPHER_SUITE_TKIP)
                 {
-                    /* KEK PTK128~255 */
                     zt_memcpy(pwdn_info->dot11tkiptxmickey.skey,
-                              &(param->key[16]), 8); /* PTK128~191 */
+                              &param->key[16], 8);
                     zt_memcpy(pwdn_info->dot11tkiprxmickey.skey,
-                              &(param->key[24]), 8); /* PTK192~255 */
+                              &param->key[24], 8);
                     psec_info->busetkipkey = zt_true;
                 }
-                if (param->alg == WLAN_CIPHER_SUITE_CCMP)
+                else if (param->alg == WLAN_CIPHER_SUITE_CCMP)
                 {
                     CFG80211_DBG("sta_hw_set_unicast_key");
                     zt_sec_sta_set_unicast_key(pnic_info, &pwdn_info->unicast_cam_id,
                                                pwdn_info->dot118021XPrivacy,
                                                pwdn_info->mac, pwdn_info->dot118021x_UncstKey.skey);
+                }
+                else
+                {
+                    res = -EINVAL;
+                    goto exit;
                 }
             }
             else /* group key */
@@ -808,10 +831,19 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
                           param->key,
                           min_t(zt_u16, param->key_len, 16));
 
-                zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
-                          &param->key, 8);
-                zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
-                          &param->key[8], 8);
+                if (param->alg == WLAN_CIPHER_SUITE_TKIP)
+                {
+                    zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
+                              &param->key[16], 8);
+                    zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
+                              &param->key[24], 8);
+                    psec_info->busetkipkey = zt_true;
+                }
+                else if (param->alg != WLAN_CIPHER_SUITE_CCMP)
+                {
+                    res = -EINVAL;
+                    goto exit;
+                }
                 psec_info->binstallGrpkey = true;
                 psec_info->dot118021XGrpKeyid = param->idx;
                 if (psec_info->dot118021XGrpPrivacy == _AES_)
@@ -905,21 +937,39 @@ static zt_s32 _add_key_cb(struct wiphy *wiphy, struct net_device *ndev,
 #endif
                           struct key_params *params)
 {
-    ndev_priv_st *pndev_priv = netdev_priv(ndev);
-    nic_info_st *pnic_info = pndev_priv->nic;
+    ndev_priv_st *pndev_priv;
+    nic_info_st *pnic_info;
     zt_u32 param_len;
     struct cfg80211_crypt *param = NULL;
     zt_s32 res = 0;
 
-    CFG80211_INFO("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
+    /* MAC address logging follows validated netdev lookup below. */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
     CFG80211_DBG("pairwise=%d\n", pairwise);
 #endif
 
+    if (ndev == NULL || params == NULL)
+    {
+        return -EINVAL;
+    }
+    pndev_priv = netdev_priv(ndev);
+    if (pndev_priv == NULL || pndev_priv->nic == NULL)
+    {
+        return -EINVAL;
+    }
+    pnic_info = pndev_priv->nic;
+    CFG80211_INFO("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
+
     if (pnic_info->is_driver_critical)
     {
         CFG80211_WARN("driver enter crital");
+        return -EINVAL;
+    }
+    if (key_index >= ZT_80211_WEP_KEYS || params->key == NULL ||
+            !cfg80211_key_len_valid(params->cipher, params->key_len))
+    {
+        CFG80211_WARN("invalid key index, cipher or key length");
         return -EINVAL;
     }
 

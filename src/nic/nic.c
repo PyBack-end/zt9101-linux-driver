@@ -36,7 +36,7 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     if (zt_tx_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_tx_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     /* rx init */
@@ -44,7 +44,7 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     if (zt_rx_init(pnic_info))
     {
         LOG_E("===>zt_rx_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     /* local info init */
@@ -52,7 +52,7 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     if (zt_local_cfg_init(pnic_info) < 0)
     {
         LOG_E("===>zt_local_cfg_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     /* get local default cfg */
@@ -67,7 +67,7 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     if (zt_hw_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_hw_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     /* get hw default cfg */
@@ -183,6 +183,7 @@ zt_s32 nic_init(nic_info_st *pnic_info)
         LOG_E("===>prv_hardware_init error");
         goto init_fail;
     }
+    hardware_ready = zt_true;
 
     /*p2p*/
 #ifdef ZT_CONFIG_P2P

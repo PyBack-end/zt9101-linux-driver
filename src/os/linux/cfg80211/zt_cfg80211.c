@@ -1918,7 +1918,9 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
 
         ch_num = p2p_info->ext_channel_num + req->n_channels;
 
-        if (req->ssids != NULL && 0 == zt_memcmp(req->ssids->ssid, "DIRECT-", 7) &&
+        if (req->n_ssids != 0 && req->ssids != NULL &&
+        req->ssids[0].ssid_len >= 7 &&
+        0 == zt_memcmp(req->ssids[0].ssid, "DIRECT-", 7) &&
             req->ssids[0].ssid_len > 7 && (p2p_info->go_negoing & ZT_BIT(P2P_INVIT_RESP)))
         {
             /* need to check p2p ssid found or not, only after invitation resp */
@@ -2180,7 +2182,7 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
         }
     }
 
-    LOG_I("this is zdg:: req->ssid:: %s\n", req->ssids);
+    LOG_I("scan request: channels=%u ssids=%u", req->n_channels, req->n_ssids);
 
     if (req->ssids != NULL && 0 == zt_memcmp(req->ssids->ssid, "DIRECT-", 7)
             && zt_p2p_get_ie((zt_u8 *) req->ie, req->ie_len, NULL, NULL))

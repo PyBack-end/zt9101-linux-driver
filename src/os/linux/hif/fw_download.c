@@ -96,7 +96,7 @@ static zt_s32 fwdl_wait_fw_startup(hif_node_st *hif_node)
 zt_s32 zt_fw_download(void *node)
 {
     hif_node_st *hif_node = node;
-    struct hif_firmware_info firmware_info;
+    struct hif_firmware_info firmware_info = { 0 };
     zt_u8 re_dw_cnt;
     int ret;
     zt_u8 value8;
@@ -107,6 +107,7 @@ zt_s32 zt_fw_download(void *node)
     ret = hif_firmware_read_get(hif_node->drv_ops->firmware_no, &firmware_info);
     if (ret < 0)
     {
+        hif_firmware_read_free(&firmware_info);
         LOG_E("Can't get firmware for downloading");
         return -1;
     }
@@ -133,11 +134,12 @@ zt_s32 zt_fw_download(void *node)
                                (zt_u8 *)firmware_info.fw0, firmware_info.fw0_size))
         {
             re_dw_cnt++;
-            if(re_dw_cnt < 3) {
+            if (re_dw_cnt < 3)
+            {
+                hif_firmware_read_free(&firmware_info);
                 goto DW_ALL_FW_FAIL_RETRY;
-            } else {
-                goto DW_ALL_FW_FAIL_RETURN;
             }
+            goto DW_ALL_FW_FAIL_RETURN;
         }
 
         if (hif_write_firmware(hif_node, 1,

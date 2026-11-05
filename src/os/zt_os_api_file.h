@@ -22,7 +22,7 @@ zt_s32     zt_os_api_file_read(zt_file *file, loff_t offset, zt_u8 *data,
                                zt_u32 size);
 zt_s32     zt_os_api_file_readline(zt_file *file, loff_t *offset,
                                    zt_u8 *data, zt_u32 size);
-size_t  zt_os_api_file_size(zt_file *file);
+loff_t  zt_os_api_file_size(zt_file *file);
 void    zt_os_api_file_close(zt_file *file);
 
 zt_s32 zt_os_api_file_write(zt_file *file, loff_t offset, zt_u8 *data,

@@ -877,6 +877,12 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
             AUTH_DBG("new msg fail, error code: %d", rst);
             return -6;
         }
+        if (mgmt_len > pmsg->alloc_value_size)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            AUTH_WARN("auth response exceeds message capacity");
+            return -7;
+        }
         pmsg->len = mgmt_len;
         zt_memcpy(pmsg->value, pmgmt, mgmt_len);
         rst = zt_msg_push(pmsg_que, pmsg);

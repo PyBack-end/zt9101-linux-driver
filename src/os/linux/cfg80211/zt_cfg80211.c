@@ -4567,6 +4567,8 @@ void zt_cfg80211_widev_unreg(nic_info_st *pnic_info)
     CFG80211_DBG("ndev_id:%d", pnic_info->ndev_id);
 
     zt_scan_wait_done(pnic_info, zt_true, 400);
+    /* A timed-out scan must not leave cfg80211 holding a request into teardown. */
+    zt_cfg80211_scan_done_event_up(pnic_info, zt_true);
 
     pwidev = pnic_info->pwidev;
     pndev = pnic_info->ndev;

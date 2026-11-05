@@ -567,6 +567,7 @@ zt_s32 zt_p2p_term(nic_info_st *pnic_info)
     {
         zt_kfree(pwfd_info->wfd_ie[i]);
         pwfd_info->wfd_ie[i] = NULL;
+        pwfd_info->wfd_ie_len[i] = 0;
     }
 
     zt_os_api_timer_unreg(&p2p_info->nego_timer);

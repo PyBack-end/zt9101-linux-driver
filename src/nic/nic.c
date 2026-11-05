@@ -20,6 +20,10 @@
 static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
 {
     zt_s32 ret = 0;
+    zt_bool tx_ready = zt_false;
+    zt_bool rx_ready = zt_false;
+    zt_bool local_ready = zt_false;
+    zt_bool hw_ready = zt_false;
 
     LOG_D("[NIC] prv_hardware_init - entry");
 
@@ -31,42 +35,46 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     if (zt_tx_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_tx_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    tx_ready = zt_true;
 
     /* rx init */
     if (zt_rx_init(pnic_info))
     {
         LOG_E("===>zt_rx_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    rx_ready = zt_true;
 
     /* local info init */
     if (zt_local_cfg_init(pnic_info) < 0)
     {
         LOG_E("===>zt_local_cfg_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    local_ready = zt_true;
 
     /* get local default cfg */
     if (zt_local_cfg_get_default(pnic_info) < 0)
     {
         LOG_E("===>zt_local_cfg_get_default error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     /* hw info init */
     if (zt_hw_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_hw_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    hw_ready = zt_true;
 
     /* get hw default cfg */
     if (zt_hw_info_get_default_cfg(pnic_info) < 0)
     {
         LOG_E("===>zt_hw_info_get_default_cfg error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
 
     if (pnic_info->virNic == zt_false)
@@ -75,14 +83,14 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
         if (zt_hw_info_set_default_cfg(pnic_info) < 0)
         {
             LOG_E("===>zt_hw_info_set_default_cfg error");
-            return ZT_RETURN_FAIL;
+            goto init_fail;
         }
 
         /* configure */
         if (zt_local_cfg_set_default(pnic_info) < 0)
         {
             LOG_E("===>zt_local_cfg_set_default error");
-            return ZT_RETURN_FAIL;
+            goto init_fail;
         }
     }
 
@@ -91,6 +99,13 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     LOG_D("[NIC] prv_hardware_init - exit");
 
     return ret;
+
+init_fail:
+    if (hw_ready) zt_hw_info_term(pnic_info);
+    if (local_ready) zt_local_cfg_term(pnic_info);
+    if (rx_ready) zt_rx_term(pnic_info);
+    if (tx_ready) zt_tx_info_term(pnic_info);
+    return ZT_RETURN_FAIL;
 }
 
 

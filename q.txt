@@ -1,0 +1,2226 @@
+pythango_dev@V0id:/tmp/zt9101-linux-driver-publish$ cd /tmp/zt9101-linux-driver-publish
+
+echo "===== RX MESSAGE STRUCTURE ====="
+git grep -n -A25 -B10 'rx_frm_msg_t'
+
+echo "===== MESSAGE QUEUE ALLOCATION AND CLEANUP ====="
+git grep -n -E 'zt_msg_new|zt_msg_push|zt_msg_free|alloc_value_size|value_size'
+
+echo "===== MANAGEMENT FRAME PARSER ====="
+nl -ba src/nic/wlan_mgmt.c | sed -n '180,340p'
+
+echo "===== RX FRAME MESSAGE CONSUMER ====="
+nl -ba src/nic/wlan_mgmt.c | sed -n '800,955p'
+
+echo "===== RX FRAME LENGTH CALCULATION ====="
+nl -ba src/nic/wlan_mgmt.c | sed -n '1020,1220p'
+
+echo "===== MANAGEMENT IE STRUCTURE ====="
+git grep -n -A12 -B8 'zt_80211_mgmt_ie_t'
+
+echo "===== MEMORY COPY IMPLEMENTATION ====="
+git grep -n -E '#define zt_memcpy|zt_memcpy\\(' -- src
+===== RX MESSAGE STRUCTURE =====
+src/nic/wlan_mgmt.c-28-#define LOCAL_INFO                  ((local_info_st *)pnic_info->local_info)
+src/nic/wlan_mgmt.c-29-#define WLAN_MGMT_SCAN_QUE_DEEP     LOCAL_INFO->scan_que_deep
+src/nic/wlan_mgmt.c-30-#define WLAN_MGMT_SCAN_NODE_TTL     LOCAL_INFO->scan_que_node_ttl
+src/nic/wlan_mgmt.c-31-
+src/nic/wlan_mgmt.c-32-/* type define */
+src/nic/wlan_mgmt.c-33-typedef struct
+src/nic/wlan_mgmt.c-34-{
+src/nic/wlan_mgmt.c-35-    phy_status_st phy_sta;
+src/nic/wlan_mgmt.c-36-    zt_bool is_phy_sta_valid;
+src/nic/wlan_mgmt.c-37-    zt_80211_mgmt_t mgmt_frm;
+src/nic/wlan_mgmt.c:38:} rx_frm_msg_t;
+src/nic/wlan_mgmt.c-39-
+src/nic/wlan_mgmt.c-40-typedef struct
+src/nic/wlan_mgmt.c-41-{
+src/nic/wlan_mgmt.c-42-    zt_u8 ch_num;
+src/nic/wlan_mgmt.c-43-    zt_u8 ch_map[MAX_CHANNEL_NUM];
+src/nic/wlan_mgmt.c-44-} scan_que_refresh_msg_t;
+src/nic/wlan_mgmt.c-45-
+src/nic/wlan_mgmt.c-46-typedef struct
+src/nic/wlan_mgmt.c-47-{
+src/nic/wlan_mgmt.c-48-    zt_u8 cmd;
+src/nic/wlan_mgmt.c-49-} chip_reset_msg_t;
+src/nic/wlan_mgmt.c-50-
+src/nic/wlan_mgmt.c-51-
+src/nic/wlan_mgmt.c-52-/* function declaration */
+src/nic/wlan_mgmt.c-53-zt_s32 zt_wlan_mgmt_scan_que_read_try(zt_wlan_mgmt_scan_que_t *pscan_que)
+src/nic/wlan_mgmt.c-54-{
+src/nic/wlan_mgmt.c-55-    if (pscan_que == NULL)
+src/nic/wlan_mgmt.c-56-    {
+src/nic/wlan_mgmt.c-57-        return -1;
+src/nic/wlan_mgmt.c-58-    }
+src/nic/wlan_mgmt.c-59-
+src/nic/wlan_mgmt.c-60-    zt_os_api_lock_lock(&pscan_que->lock);
+src/nic/wlan_mgmt.c-61-    if (pscan_que->read_cnt == 0xFF)
+src/nic/wlan_mgmt.c-62-    {
+src/nic/wlan_mgmt.c-63-        zt_os_api_lock_unlock(&pscan_que->lock);
+--
+src/nic/wlan_mgmt.c-147-        zt_memset(scan_node, 0x0, sizeof(*scan_node));
+src/nic/wlan_mgmt.c-148-        *pnew_node = scan_node;
+src/nic/wlan_mgmt.c-149-    }
+src/nic/wlan_mgmt.c-150-
+src/nic/wlan_mgmt.c-151-    return 0;
+src/nic/wlan_mgmt.c-152-}
+src/nic/wlan_mgmt.c-153-
+src/nic/wlan_mgmt.c-154-#define NODE_INFO_DBG(...)  //WLAN_MGMT_DBG(__VA_ARGS__)
+src/nic/wlan_mgmt.c-155-static zt_inline
+src/nic/wlan_mgmt.c-156-zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.c:157:                                rx_frm_msg_t *pfrm_msg, zt_u16 frm_msg_len,
+src/nic/wlan_mgmt.c-158-                                zt_wlan_mgmt_scan_que_node_t *pscan_que_node)
+src/nic/wlan_mgmt.c-159-{
+src/nic/wlan_mgmt.c-160-    zt_80211_mgmt_t *pmgmt = &pfrm_msg->mgmt_frm;
+src/nic/wlan_mgmt.c:161:    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-162-    zt_u8 *pele_start, *pele_end;
+src/nic/wlan_mgmt.c-163-    zt_80211_mgmt_ie_t *pie;
+src/nic/wlan_mgmt.c-164-    zt_80211_mgmt_dsss_parameter_t *pdsss_para;
+src/nic/wlan_mgmt.c-165-    zt_80211_mgmt_ht_operation_t *pht_oper;
+src/nic/wlan_mgmt.c-166-    zt_u8 support_rate_cnt = 0;
+src/nic/wlan_mgmt.c-167-    zt_80211_mgmt_ht_cap_t *pht_cap;
+src/nic/wlan_mgmt.c-168-    zt_u8 i;
+src/nic/wlan_mgmt.c-169-    zt_bool cck_spot = zt_false, ofdm_spot = zt_false;
+src/nic/wlan_mgmt.c-170-    zt_u8 wpa_oui[4] = {0x0, 0x50, 0xf2, 0x01};
+src/nic/wlan_mgmt.c-171-    zt_u8 wps_oui[4] = {0x0, 0x50, 0xf2, 0x04};
+src/nic/wlan_mgmt.c-172-    zt_80211_frame_e frame_type;
+src/nic/wlan_mgmt.c-173-
+src/nic/wlan_mgmt.c-174-    NODE_INFO_DBG("----------------------------");
+src/nic/wlan_mgmt.c-175-
+src/nic/wlan_mgmt.c-176-    /* get frame type*/
+src/nic/wlan_mgmt.c-177-    frame_type = zt_80211_hdr_type_get(pmgmt);
+src/nic/wlan_mgmt.c-178-    pscan_que_node->frame_type = frame_type;
+src/nic/wlan_mgmt.c-179-
+src/nic/wlan_mgmt.c-180-    /* get the phy status */
+src/nic/wlan_mgmt.c-181-    if (pfrm_msg->is_phy_sta_valid)
+src/nic/wlan_mgmt.c-182-    {
+src/nic/wlan_mgmt.c-183-        pscan_que_node->signal_strength = pfrm_msg->phy_sta.signal_strength;
+src/nic/wlan_mgmt.c-184-        pscan_que_node->signal_strength_scale =
+src/nic/wlan_mgmt.c-185-            signal_scale_mapping(pfrm_msg->phy_sta.signal_strength);
+src/nic/wlan_mgmt.c-186-        pscan_que_node->signal_qual = pfrm_msg->phy_sta.signal_qual;
+--
+src/nic/wlan_mgmt.c-457-            pscan_que_node->ht_cap_en ? ZT_WLAN_BSS_NAME_IEEE80211_GN :
+src/nic/wlan_mgmt.c-458-            ZT_WLAN_BSS_NAME_IEEE80211_G;
+src/nic/wlan_mgmt.c-459-    }
+src/nic/wlan_mgmt.c-460-
+src/nic/wlan_mgmt.c-461-    return 0;
+src/nic/wlan_mgmt.c-462-}
+src/nic/wlan_mgmt.c-463-#undef NODE_INFO_DBG
+src/nic/wlan_mgmt.c-464-
+src/nic/wlan_mgmt.c-465-static zt_inline zt_s32
+src/nic/wlan_mgmt.c-466-wlan_mgmt_scan_que_node_push(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.c:467:                             rx_frm_msg_t *pfrm_msg,
+src/nic/wlan_mgmt.c-468-                             zt_wlan_mgmt_scan_que_node_t *pnew_node)
+src/nic/wlan_mgmt.c-469-{
+src/nic/wlan_mgmt.c-470-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-471-    zt_wlan_mgmt_scan_que_t *pscan_que = &pwlan_mgmt_info->scan_que;
+src/nic/wlan_mgmt.c-472-    zt_wlan_mgmt_scan_que_node_t *pnode, *pswap_node = NULL, *pinst_pos = NULL;
+src/nic/wlan_mgmt.c-473-    zt_list_t *pos;
+src/nic/wlan_mgmt.c-474-
+src/nic/wlan_mgmt.c-475-    zt_list_for_each(pos, zt_que_list_head(&pscan_que->ready))
+src/nic/wlan_mgmt.c-476-    {
+src/nic/wlan_mgmt.c-477-        pnode = zt_list_entry(pos, zt_wlan_mgmt_scan_que_node_t, list);
+src/nic/wlan_mgmt.c-478-        if (!pswap_node &&
+src/nic/wlan_mgmt.c-479-                zt_80211_is_same_addr(pnew_node->bssid, pnode->bssid))
+src/nic/wlan_mgmt.c-480-        {
+src/nic/wlan_mgmt.c-481-            pswap_node = pnode;
+src/nic/wlan_mgmt.c-482-        }
+src/nic/wlan_mgmt.c-483-        if (!pinst_pos &&
+src/nic/wlan_mgmt.c-484-                pnew_node->signal_strength > pnode->signal_strength)
+src/nic/wlan_mgmt.c-485-        {
+src/nic/wlan_mgmt.c-486-            pinst_pos = pnode;
+src/nic/wlan_mgmt.c-487-        }
+src/nic/wlan_mgmt.c-488-        if (pswap_node && pinst_pos)
+src/nic/wlan_mgmt.c-489-        {
+src/nic/wlan_mgmt.c-490-            break;
+src/nic/wlan_mgmt.c-491-        }
+src/nic/wlan_mgmt.c-492-    }
+--
+src/nic/wlan_mgmt.c-833-            if (pwr_info->bInSuspend || uninstalling)
+src/nic/wlan_mgmt.c-834-            {
+src/nic/wlan_mgmt.c-835-                break;
+src/nic/wlan_mgmt.c-836-            }
+src/nic/wlan_mgmt.c-837-
+src/nic/wlan_mgmt.c-838-            switch (pmsg->tag)
+src/nic/wlan_mgmt.c-839-            {
+src/nic/wlan_mgmt.c-840-                case ZT_WLAN_MGMT_TAG_BEACON_FRAME :
+src/nic/wlan_mgmt.c-841-                case ZT_WLAN_MGMT_TAG_PROBERSP_FRAME :
+src/nic/wlan_mgmt.c-842-                {
+src/nic/wlan_mgmt.c:843:                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-844-                    zt_u16 frm_msg_len = pmsg->len;
+src/nic/wlan_mgmt.c-845-                    zt_wlan_mgmt_scan_que_node_t *pnew_node;
+src/nic/wlan_mgmt.c-846-
+src/nic/wlan_mgmt.c-847-                    rst = wlan_mgmt_scan_que_node_new(pnic_info, &pnew_node);
+src/nic/wlan_mgmt.c-848-                    if (rst)
+src/nic/wlan_mgmt.c-849-                    {
+src/nic/wlan_mgmt.c-850-                        WLAN_MGMT_DBG("new node fail, error code: %d", rst);
+src/nic/wlan_mgmt.c-851-                        break;
+src/nic/wlan_mgmt.c-852-                    }
+src/nic/wlan_mgmt.c-853-
+src/nic/wlan_mgmt.c-854-                    rst = wlan_mgmt_scan_node_info(pnic_info,
+src/nic/wlan_mgmt.c-855-                                                   pfrm_msg, frm_msg_len,
+src/nic/wlan_mgmt.c-856-                                                   pnew_node);
+src/nic/wlan_mgmt.c-857-                    if (rst)
+src/nic/wlan_mgmt.c-858-                    {
+src/nic/wlan_mgmt.c-859-                        WLAN_MGMT_DBG("make info fail, error code: %d", rst);
+src/nic/wlan_mgmt.c-860-                        /* pull node back to free queue. */
+src/nic/wlan_mgmt.c-861-                        zt_enque_head(&pnew_node->list, &pscan_que->free);
+src/nic/wlan_mgmt.c-862-                        break;
+src/nic/wlan_mgmt.c-863-                    }
+src/nic/wlan_mgmt.c-864-
+src/nic/wlan_mgmt.c-865-                    rst = wlan_mgmt_scan_que_node_push(pnic_info,
+src/nic/wlan_mgmt.c-866-                                                       pfrm_msg,
+src/nic/wlan_mgmt.c-867-                                                       pnew_node);
+src/nic/wlan_mgmt.c-868-                    if (rst)
+--
+src/nic/wlan_mgmt.c-906-                {
+src/nic/wlan_mgmt.c-907-                    chip_reset_msg_t *chip_reset = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-908-                    WLAN_MGMT_INFO("chip reset");
+src/nic/wlan_mgmt.c-909-
+src/nic/wlan_mgmt.c-910-                    do_chip_reset(pnic_info, chip_reset->cmd);
+src/nic/wlan_mgmt.c-911-                    break;
+src/nic/wlan_mgmt.c-912-                }
+src/nic/wlan_mgmt.c-913-
+src/nic/wlan_mgmt.c-914-                case ZT_WLAN_MGMT_TAG_PROBEREQ_P2P :
+src/nic/wlan_mgmt.c-915-                {
+src/nic/wlan_mgmt.c:916:                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-917-                    zt_u16 frm_msg_len = pmsg->len;
+src/nic/wlan_mgmt.c:918:                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-919-                    zt_p2p_recv_probereq(pnic_info,  &pfrm_msg->mgmt_frm, mgmt_len);
+src/nic/wlan_mgmt.c-920-                    break;
+src/nic/wlan_mgmt.c-921-                }
+src/nic/wlan_mgmt.c-922-
+src/nic/wlan_mgmt.c-923-                case ZT_WLAN_MGMT_TAG_ACTION :
+src/nic/wlan_mgmt.c-924-                {
+src/nic/wlan_mgmt.c:925:                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-926-                    zt_u16 frm_msg_len = pmsg->len;
+src/nic/wlan_mgmt.c:927:                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-928-                    //WLAN_MGMT_INFO("action frame");
+src/nic/wlan_mgmt.c-929-
+src/nic/wlan_mgmt.c-930-                    zt_action_frame_process(pnic_info, &pfrm_msg->mgmt_frm, mgmt_len);
+src/nic/wlan_mgmt.c-931-                    break;
+src/nic/wlan_mgmt.c-932-                }
+src/nic/wlan_mgmt.c-933-
+src/nic/wlan_mgmt.c-934-                case ZT_WLAN_MGMT_TAG_UNINSTALL :
+src/nic/wlan_mgmt.c-935-                {
+src/nic/wlan_mgmt.c-936-                    WLAN_MGMT_INFO("prepare to uninstall");
+src/nic/wlan_mgmt.c-937-                    while (wlan_mgmt_scan_que_write_try(pscan_que))
+src/nic/wlan_mgmt.c-938-                    {
+src/nic/wlan_mgmt.c-939-                        zt_msleep(1);
+src/nic/wlan_mgmt.c-940-                    }
+src/nic/wlan_mgmt.c-941-                    uninstalling = zt_true;
+src/nic/wlan_mgmt.c-942-                    break;
+src/nic/wlan_mgmt.c-943-                }
+src/nic/wlan_mgmt.c-944-
+src/nic/wlan_mgmt.c-945-                default :
+src/nic/wlan_mgmt.c-946-                    WLAN_MGMT_ERROR("unknown message tag %d", pmsg->tag);
+src/nic/wlan_mgmt.c-947-                    break;
+src/nic/wlan_mgmt.c-948-            }
+src/nic/wlan_mgmt.c-949-
+src/nic/wlan_mgmt.c-950-            zt_msg_del(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-951-        }
+src/nic/wlan_mgmt.c-952-    }
+--
+src/nic/wlan_mgmt.c-976-    /* new message entity */
+src/nic/wlan_mgmt.c-977-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c-978-    if (rst)
+src/nic/wlan_mgmt.c-979-    {
+src/nic/wlan_mgmt.c-980-        WLAN_MGMT_DBG("msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-981-        return -1;
+src/nic/wlan_mgmt.c-982-    }
+src/nic/wlan_mgmt.c-983-
+src/nic/wlan_mgmt.c-984-    /* fill message value */
+src/nic/wlan_mgmt.c-985-    {
+src/nic/wlan_mgmt.c:986:        rx_frm_msg_t *prx_frm_msg = (void *)pmsg->value;
+src/nic/wlan_mgmt.c:987:        zt_u16 value_size = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) + mgmt_len;
+src/nic/wlan_mgmt.c-988-        if (value_size > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c-989-        {
+src/nic/wlan_mgmt.c-990-            WLAN_MGMT_ERROR("frame size(%d) over limite(%d)",
+src/nic/wlan_mgmt.c-991-                            mgmt_len, pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c-992-            return -2;
+src/nic/wlan_mgmt.c-993-        }
+src/nic/wlan_mgmt.c-994-        pmsg->len = value_size;
+src/nic/wlan_mgmt.c-995-        if (phy_sta)
+src/nic/wlan_mgmt.c-996-        {
+src/nic/wlan_mgmt.c-997-            prx_frm_msg->phy_sta            = *phy_sta;
+src/nic/wlan_mgmt.c-998-            prx_frm_msg->is_phy_sta_valid   = zt_true;
+src/nic/wlan_mgmt.c-999-        }
+src/nic/wlan_mgmt.c-1000-        else
+src/nic/wlan_mgmt.c-1001-        {
+src/nic/wlan_mgmt.c-1002-            prx_frm_msg->phy_sta.rssi               = -128;
+src/nic/wlan_mgmt.c-1003-            prx_frm_msg->phy_sta.signal_strength    = 0;
+src/nic/wlan_mgmt.c-1004-            prx_frm_msg->phy_sta.signal_qual        = 0;
+src/nic/wlan_mgmt.c-1005-            prx_frm_msg->is_phy_sta_valid           = zt_false;
+src/nic/wlan_mgmt.c-1006-        }
+src/nic/wlan_mgmt.c-1007-
+src/nic/wlan_mgmt.c:1008:        void *tmp_mgmt_fram = (zt_s8 *)prx_frm_msg + ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-1009-        zt_memcpy(tmp_mgmt_fram, pmgmt, mgmt_len);
+src/nic/wlan_mgmt.c-1010-    }
+src/nic/wlan_mgmt.c-1011-
+src/nic/wlan_mgmt.c-1012-    /* new message entity */
+src/nic/wlan_mgmt.c-1013-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-1014-    if (rst)
+src/nic/wlan_mgmt.c-1015-    {
+src/nic/wlan_mgmt.c-1016-        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1017-        return -3;
+src/nic/wlan_mgmt.c-1018-    }
+src/nic/wlan_mgmt.c-1019-
+src/nic/wlan_mgmt.c-1020-    return 0;
+src/nic/wlan_mgmt.c-1021-}
+src/nic/wlan_mgmt.c-1022-
+src/nic/wlan_mgmt.c-1023-zt_s32 zt_wlan_mgmt_rx_frame(void *ptr)
+src/nic/wlan_mgmt.c-1024-{
+src/nic/wlan_mgmt.c-1025-    prx_pkt_t ppkt = ptr;
+src/nic/wlan_mgmt.c-1026-    nic_info_st *pnic_info;
+src/nic/wlan_mgmt.c-1027-    zt_wlan_mgmt_info_t *pwlan_mgmt_info;
+src/nic/wlan_mgmt.c-1028-    zt_80211_mgmt_t *pmgmt;
+src/nic/wlan_mgmt.c-1029-    zt_u32 mgmt_len;
+src/nic/wlan_mgmt.c-1030-    wdn_net_info_st *pwdn_info;
+src/nic/wlan_mgmt.c-1031-    zt_80211_frame_e frm_type;
+src/nic/wlan_mgmt.c-1032-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1033-
+--
+src/nic/wlan_mgmt.c-1277-
+src/nic/wlan_mgmt.c-1278-    return 0;
+src/nic/wlan_mgmt.c-1279-}
+src/nic/wlan_mgmt.c-1280-
+src/nic/wlan_mgmt.c-1281-static zt_s32 wlan_mgmt_msg_init(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+src/nic/wlan_mgmt.c-1282-{
+src/nic/wlan_mgmt.c-1283-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1284-
+src/nic/wlan_mgmt.c-1285-    zt_msg_init(pmsg_que);
+src/nic/wlan_mgmt.c-1286-    return (zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_BEACON_FRAME,
+src/nic/wlan_mgmt.c:1287:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1288-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c-1289-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBERSP_FRAME,
+src/nic/wlan_mgmt.c:1290:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1291-                         ZT_80211_MGMT_PROBERSP_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c-1292-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBEREQ_P2P,
+src/nic/wlan_mgmt.c:1293:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1294-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c-1295-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_ACTION,
+src/nic/wlan_mgmt.c:1296:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1297-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c-1298-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_FLUSH, 0, 1) ||
+src/nic/wlan_mgmt.c-1299-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, 0, 1) ||
+src/nic/wlan_mgmt.c-1300-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH,
+src/nic/wlan_mgmt.c-1301-                         sizeof(scan_que_refresh_msg_t), 2) ||
+src/nic/wlan_mgmt.c-1302-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET,
+src/nic/wlan_mgmt.c-1303-                         sizeof(chip_reset_msg_t), 2)) ? -1 : 0;
+src/nic/wlan_mgmt.c-1304-}
+src/nic/wlan_mgmt.c-1305-
+src/nic/wlan_mgmt.c-1306-zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+src/nic/wlan_mgmt.c-1307-{
+src/nic/wlan_mgmt.c-1308-    zt_msg_deinit(&pwlan_mgmt_info->msg_que);
+src/nic/wlan_mgmt.c-1309-}
+src/nic/wlan_mgmt.c-1310-
+src/nic/wlan_mgmt.c-1311-zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
+src/nic/wlan_mgmt.c-1312-{
+src/nic/wlan_mgmt.c-1313-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1314-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1315-    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1316-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1317-
+src/nic/wlan_mgmt.c-1318-    /* new message entity */
+src/nic/wlan_mgmt.c-1319-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c-1320-    if (rst)
+src/nic/wlan_mgmt.c-1321-    {
+===== MESSAGE QUEUE ALLOCATION AND CLEANUP =====
+src/nic/adhoc.c:852:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, &pmsg);
+src/nic/adhoc.c:858:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/adhoc.c:892:        rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
+src/nic/adhoc.c:900:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c:1017:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_RSP, &pmsg);
+src/nic/assoc.c:1025:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c:1229:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_START, &pmsg);
+src/nic/assoc.c:1235:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c:1273:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_ABORT, &pmsg);
+src/nic/assoc.c:1279:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c:770:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_START, &pmsg);
+src/nic/auth.c:776:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c:811:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_ABORT, &pmsg);
+src/nic/auth.c:817:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c:874:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_RSP, &pmsg);
+src/nic/auth.c:882:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/lps.c:768:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_LPS, &pmsg);
+src/nic/lps.c:778:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:400:                zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:457:                zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:517:                zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:1561:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/mlme.c:1564:        MLME_WARN("zt_msg_new fail error code: %d", rst);
+src/nic/mlme.c:1573:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:1577:        MLME_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/mlme.c:1632:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN, &pmsg);
+src/nic/mlme.c:1655:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:1736:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+src/nic/mlme.c:1745:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:1815:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN, &pmsg);
+src/nic/mlme.c:1846:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c:2226:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN_IBSS, &pmsg);
+src/nic/mlme.c:2242:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/scan.c:1294:    rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_START, &pmsg);
+src/nic/scan.c:1330:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/scan.c:1361:        rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_ABORT, &pmsg);
+src/nic/scan.c:1367:        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/scan.c:1433:    zt_msg_free(pmsg_que);
+src/nic/utility/zt_msg.c:55:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
+src/nic/utility/zt_msg.c:92:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c:120:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c:253:        pmsg->alloc_value_size = size;
+src/nic/utility/zt_msg.c:262:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h:59:    zt_u32 alloc_value_size;
+src/nic/utility/zt_msg.h:77:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag,
+src/nic/utility/zt_msg.h:79:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h:80:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h:139:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que);
+src/nic/utility/zt_msg.h:150:    zt_msg_free(pmsg_que);
+src/nic/wlan_mgmt.c:977:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c:987:        zt_u16 value_size = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) + mgmt_len;
+src/nic/wlan_mgmt.c:988:        if (value_size > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c:991:                            mgmt_len, pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c:994:        pmsg->len = value_size;
+src/nic/wlan_mgmt.c:1013:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c:1016:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c:1319:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c:1327:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c:1330:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c:1358:    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH, &pmsg);
+src/nic/wlan_mgmt.c:1366:    if (sizeof(scan_que_refresh_msg_t) > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c:1368:        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c:1378:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c:1381:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c:1402:    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET, &pmsg);
+src/nic/wlan_mgmt.c:1410:    if (sizeof(chip_reset_msg_t) > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c:1412:        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c:1421:    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c:1424:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c:1493:        rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, &pnew_msg);
+src/nic/wlan_mgmt.c:1498:        zt_msg_push(pmsg_que, pnew_msg);
+===== MANAGEMENT FRAME PARSER =====
+   180	    /* get the phy status */
+   181	    if (pfrm_msg->is_phy_sta_valid)
+   182	    {
+   183	        pscan_que_node->signal_strength = pfrm_msg->phy_sta.signal_strength;
+   184	        pscan_que_node->signal_strength_scale =
+   185	            signal_scale_mapping(pfrm_msg->phy_sta.signal_strength);
+   186	        pscan_que_node->signal_qual = pfrm_msg->phy_sta.signal_qual;
+   187	    }
+   188	    NODE_INFO_DBG("RSSI=%d, signal stregth=%d, signal quality=%d",
+   189	                  translate_percentage_to_dbm(pscan_que_node->signal_strength),
+   190	                  pscan_que_node->signal_strength_scale,
+   191	                  pscan_que_node->signal_qual);
+   192	
+   193	    /* get bssid */
+   194	    zt_memcpy(pscan_que_node->bssid, pmgmt->bssid, sizeof(zt_80211_bssid_t));
+   195	    NODE_INFO_DBG("BSSID=%02X:%02X:%02X:%02X:%02X:%02X",
+   196	                  pscan_que_node->bssid[0], pscan_que_node->bssid[1],
+   197	                  pscan_que_node->bssid[2], pscan_que_node->bssid[3],
+   198	                  pscan_que_node->bssid[4], pscan_que_node->bssid[5]);
+   199	
+   200	    /* get operation mode */
+   201	    if (!ZT_80211_CAPAB_IS_MESH_STA_BSS(pmgmt->beacon.capab))
+   202	    {
+   203	        pscan_que_node->opr_mode =
+   204	            (pmgmt->beacon.capab & ZT_80211_MGMT_CAPAB_ESS) ? ZT_WLAN_OPR_MODE_MASTER :
+   205	            ZT_WLAN_OPR_MODE_ADHOC;
+   206	    }
+   207	    else
+   208	    {
+   209	        if (zt_p2p_is_valid(pnic_info))
+   210	        {
+   211	            p2p_info_st *p2p_info = pnic_info->p2p;
+   212	            if (!zt_memcmp(&pmgmt->beacon.variable[2],
+   213	                           p2p_info->p2p_wildcard_ssid, P2P_WILDCARD_SSID_LEN))
+   214	            {
+   215	                NODE_INFO_DBG(" This is a p2p device role = %d", p2p_info->role);
+   216	            }
+   217	        }
+   218	        else
+   219	        {
+   220	            WLAN_MGMT_WARN("operation mode is mesh");
+   221	            return -1;
+   222	        }
+   223	    }
+   224	
+   225	    /* get privacy */
+   226	    pscan_que_node->cap_privacy =
+   227	        (zt_bool)!!(zt_le16_to_cpu(pmgmt->beacon.capab) & ZT_80211_MGMT_CAPAB_PRIVACY);
+   228	
+   229	    /* ies formation */
+   230	    pscan_que_node->ie_len = mgmt_len - ZT_OFFSETOF(zt_80211_mgmt_t, beacon);
+   231	    if (pscan_que_node->ie_len >= sizeof(pscan_que_node->ies))
+   232	    {
+   233	        WLAN_MGMT_ERROR("ie data length too long");
+   234	        return -2;
+   235	    }
+   236	    zt_memcpy(&pscan_que_node->ies[0], &pmgmt->beacon, pscan_que_node->ie_len);
+   237	    pscan_que_node->ies[pscan_que_node->ie_len] = 0x0;
+   238	
+   239	    /* mark ssid no initilize */
+   240	    pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_UNKNOWN;
+   241	
+   242	    pele_start = &pmgmt->beacon.variable[0];
+   243	    pele_end = &pele_start[mgmt_len - ZT_OFFSETOF(zt_80211_mgmt_t,
+   244	                                    beacon.variable)];
+   245	    do
+   246	    {
+   247	        pie = (zt_80211_mgmt_ie_t *)pele_start;
+   248	        switch (pie->element_id)
+   249	        {
+   250	            case ZT_80211_MGMT_EID_SSID :
+   251	                if (pie->len >= sizeof(pscan_que_node->ssid.data))
+   252	                {
+   253	                    WLAN_MGMT_WARN("invalid SSID length(%d)", pie->len);
+   254	                    return -3;
+   255	                }
+   256	                if (frame_type == ZT_80211_FRM_PROBE_RESP)
+   257	                {
+   258	                    if (!pie->len)
+   259	                    {
+   260	                        WLAN_MGMT_DBG("probe resp send from a mesh STA, bssid="ZT_MAC_FMT,
+   261	                                      ZT_MAC_ARG(pscan_que_node->bssid));
+   262	                        return -4;
+   263	                    }
+   264	
+   265	                    if (pscan_que_node->ssid_type == ZT_80211_HIDDEN_SSID_UNKNOWN)
+   266	                    {
+   267	                        /* mark ssid type no hidden */
+   268	                        pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_NOT_IN_USE;
+   269	                    }
+   270	                    /* update ssid information */
+   271	                    pscan_que_node->ssid.length = pie->len;
+   272	                    zt_memcpy(pscan_que_node->ssid.data, pie->data, pie->len);
+   273	                    pscan_que_node->ssid.data[pie->len] = '\0';
+   274	                    NODE_INFO_DBG("SSID: %s", pscan_que_node->ssid.data);
+   275	                }
+   276	                else
+   277	                {
+   278	                    if (!pie->len)
+   279	                    {
+   280	                        pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_ZERO_LEN;
+   281	                    }
+   282	                    else if (pie->data[0] == '\0')
+   283	                    {
+   284	                        pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_ZERO_CONTENTS;
+   285	                        pscan_que_node->ssid.length = pie->len;
+   286	                    }
+   287	                    else
+   288	                    {
+   289	                        pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_NOT_IN_USE;
+   290	                        pscan_que_node->ssid.length = pie->len;
+   291	                        zt_memcpy(pscan_que_node->ssid.data, pie->data, pie->len);
+   292	                        pscan_que_node->ssid.data[pie->len] = '\0';
+   293	                        NODE_INFO_DBG("SSID: %s", pscan_que_node->ssid.data);
+   294	                    }
+   295	                }
+   296	                break;
+   297	
+   298	            case ZT_80211_MGMT_EID_SUPP_RATES :
+   299	            case ZT_80211_MGMT_EID_EXT_SUPP_RATES :
+   300	                /* basic rate */
+   301	                if (support_rate_cnt == 0)
+   302	                {
+   303	                    zt_memset(pscan_que_node->spot_rate, 0,
+   304	                              sizeof(pscan_que_node->spot_rate));
+   305	                }
+   306	                if (pie->len == 0 || pie->len + support_rate_cnt >
+   307	                        sizeof(pscan_que_node->spot_rate))
+   308	                {
+   309	                    WLAN_MGMT_WARN("support rate number over limit");
+   310	                    return -5;
+   311	                }
+   312	                else
+   313	                {
+   314	                    zt_memcpy(&pscan_que_node->spot_rate[support_rate_cnt],
+   315	                              pie->data, pie->len);
+   316	                    support_rate_cnt += pie->len;
+   317	                }
+   318	                break;
+   319	
+   320	            case ZT_80211_MGMT_EID_DS_PARAMS :
+   321	                pdsss_para = (zt_80211_mgmt_dsss_parameter_t *)pie->data;
+   322	                pscan_que_node->channel = pdsss_para->current_channel;
+   323	                break;
+   324	
+   325	            case ZT_80211_MGMT_EID_HT_OPERATION :
+   326	                /* for 5G AP */
+   327	                pht_oper = (zt_80211_mgmt_ht_operation_t *)pie->data;
+   328	                pscan_que_node->channel = pht_oper->primary_chan;
+   329	                break;
+   330	
+   331	            case ZT_80211_MGMT_EID_HT_CAPABILITY :
+   332	                pscan_que_node->ht_cap_en = zt_true;
+   333	                pht_cap = (zt_80211_mgmt_ht_cap_t *)pie->data;
+   334	                zt_memcpy(&pscan_que_node->mcs, pht_cap->mcs_info.rx_mask,
+   335	                          sizeof(pscan_que_node->mcs));
+   336	                pscan_que_node->bw_40mhz =
+   337	                    (zt_bool)(!!(pht_cap->cap_info &
+   338	                                 ZT_80211_MGMT_HT_CAP_SUP_WIDTH_20_40));
+   339	                pscan_que_node->short_gi =
+   340	                    (zt_bool)(!!(pht_cap->cap_info &
+===== RX FRAME MESSAGE CONSUMER =====
+   800	    if (pnic_info->buddy_nic)
+   801	    {
+   802	        nic_info_st *pbuddy_info = pnic_info->buddy_nic;
+   803	        pbuddy_info->is_driver_critical = zt_false;
+   804	        zt_mlme_resume(pbuddy_info);
+   805	#ifdef CFG_ENABLE_AP_MODE
+   806	        zt_ap_resume(pbuddy_info);
+   807	#endif
+   808	        zt_p2p_resume(pbuddy_info);
+   809	    }
+   810	
+   811	    return 0;
+   812	}
+   813	
+   814	static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
+   815	{
+   816	    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+   817	    pwr_info_st *pwr_info = pnic_info->pwr_info;
+   818	    zt_wlan_mgmt_scan_que_t *pscan_que = &pwlan_mgmt_info->scan_que;
+   819	    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+   820	    zt_msg_t *pmsg;
+   821	    zt_bool uninstalling = zt_false;
+   822	    zt_s32 rst;
+   823	
+   824	    zt_os_api_thread_enter_hook(pwlan_mgmt_info->tid);
+   825	
+   826	    while (zt_os_api_thread_wait_stop(pwlan_mgmt_info->tid) == zt_false)
+   827	    {
+   828	        zt_msleep(1);
+   829	
+   830	        /* wait new message */
+   831	        while (!zt_msg_pop(pmsg_que, &pmsg))
+   832	        {
+   833	            if (pwr_info->bInSuspend || uninstalling)
+   834	            {
+   835	                break;
+   836	            }
+   837	
+   838	            switch (pmsg->tag)
+   839	            {
+   840	                case ZT_WLAN_MGMT_TAG_BEACON_FRAME :
+   841	                case ZT_WLAN_MGMT_TAG_PROBERSP_FRAME :
+   842	                {
+   843	                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+   844	                    zt_u16 frm_msg_len = pmsg->len;
+   845	                    zt_wlan_mgmt_scan_que_node_t *pnew_node;
+   846	
+   847	                    rst = wlan_mgmt_scan_que_node_new(pnic_info, &pnew_node);
+   848	                    if (rst)
+   849	                    {
+   850	                        WLAN_MGMT_DBG("new node fail, error code: %d", rst);
+   851	                        break;
+   852	                    }
+   853	
+   854	                    rst = wlan_mgmt_scan_node_info(pnic_info,
+   855	                                                   pfrm_msg, frm_msg_len,
+   856	                                                   pnew_node);
+   857	                    if (rst)
+   858	                    {
+   859	                        WLAN_MGMT_DBG("make info fail, error code: %d", rst);
+   860	                        /* pull node back to free queue. */
+   861	                        zt_enque_head(&pnew_node->list, &pscan_que->free);
+   862	                        break;
+   863	                    }
+   864	
+   865	                    rst = wlan_mgmt_scan_que_node_push(pnic_info,
+   866	                                                       pfrm_msg,
+   867	                                                       pnew_node);
+   868	                    if (rst)
+   869	                    {
+   870	                        WLAN_MGMT_DBG("node input scan queue fail, error code: %d", rst);
+   871	                        /* pull node back to free queue. */
+   872	                        zt_enque_head(&pnew_node->list, &pscan_que->free);
+   873	                    }
+   874	
+   875	                    if (is_bss_info_changed(pnic_info, pnew_node))
+   876	                    {
+   877	                        WLAN_MGMT_ERROR("AP attribute has changed, break current connection");
+   878	                        zt_mlme_deauth(pnic_info, zt_true, ZT_80211_REASON_UNSPECIFIED);
+   879	                    }
+   880	                    break;
+   881	                }
+   882	
+   883	                case ZT_WLAN_MGMT_TAG_SCAN_QUE_FLUSH :
+   884	                {
+   885	                    WLAN_MGMT_INFO("scan queue flush");
+   886	                    rst = wlan_mgmt_scan_que_node_flush(pnic_info);
+   887	                    if (rst)
+   888	                    {
+   889	                        WLAN_MGMT_WARN("scan queue flush fail, error code %d", rst);
+   890	                    }
+   891	                    break;
+   892	                }
+   893	
+   894	                case ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH :
+   895	                {
+   896	                    WLAN_MGMT_INFO("scan queue refresh");
+   897	                    rst = wlan_mgmt_scan_que_refresh(pnic_info, (void *)pmsg->value);
+   898	                    if (rst)
+   899	                    {
+   900	                        WLAN_MGMT_WARN("scan queue refresh fail, error code %d", rst);
+   901	                    }
+   902	                    break;
+   903	                }
+   904	
+   905	                case ZT_WLAN_MGMT_TAG_CHIPRESET :
+   906	                {
+   907	                    chip_reset_msg_t *chip_reset = (void *)pmsg->value;
+   908	                    WLAN_MGMT_INFO("chip reset");
+   909	
+   910	                    do_chip_reset(pnic_info, chip_reset->cmd);
+   911	                    break;
+   912	                }
+   913	
+   914	                case ZT_WLAN_MGMT_TAG_PROBEREQ_P2P :
+   915	                {
+   916	                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+   917	                    zt_u16 frm_msg_len = pmsg->len;
+   918	                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+   919	                    zt_p2p_recv_probereq(pnic_info,  &pfrm_msg->mgmt_frm, mgmt_len);
+   920	                    break;
+   921	                }
+   922	
+   923	                case ZT_WLAN_MGMT_TAG_ACTION :
+   924	                {
+   925	                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+   926	                    zt_u16 frm_msg_len = pmsg->len;
+   927	                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+   928	                    //WLAN_MGMT_INFO("action frame");
+   929	
+   930	                    zt_action_frame_process(pnic_info, &pfrm_msg->mgmt_frm, mgmt_len);
+   931	                    break;
+   932	                }
+   933	
+   934	                case ZT_WLAN_MGMT_TAG_UNINSTALL :
+   935	                {
+   936	                    WLAN_MGMT_INFO("prepare to uninstall");
+   937	                    while (wlan_mgmt_scan_que_write_try(pscan_que))
+   938	                    {
+   939	                        zt_msleep(1);
+   940	                    }
+   941	                    uninstalling = zt_true;
+   942	                    break;
+   943	                }
+   944	
+   945	                default :
+   946	                    WLAN_MGMT_ERROR("unknown message tag %d", pmsg->tag);
+   947	                    break;
+   948	            }
+   949	
+   950	            zt_msg_del(pmsg_que, pmsg);
+   951	        }
+   952	    }
+   953	
+   954	    zt_os_api_thread_exit(pwlan_mgmt_info->tid);
+   955	
+===== RX FRAME LENGTH CALCULATION =====
+  1020	    return 0;
+  1021	}
+  1022	
+  1023	zt_s32 zt_wlan_mgmt_rx_frame(void *ptr)
+  1024	{
+  1025	    prx_pkt_t ppkt = ptr;
+  1026	    nic_info_st *pnic_info;
+  1027	    zt_wlan_mgmt_info_t *pwlan_mgmt_info;
+  1028	    zt_80211_mgmt_t *pmgmt;
+  1029	    zt_u32 mgmt_len;
+  1030	    wdn_net_info_st *pwdn_info;
+  1031	    zt_80211_frame_e frm_type;
+  1032	    zt_s32 rst;
+  1033	
+  1034	    if (ppkt == NULL || ppkt->p_nic_info == NULL || ppkt->pdata == NULL)
+  1035	    {
+  1036	        WLAN_MGMT_ERROR("null pointer");
+  1037	        return -1;
+  1038	    }
+  1039	    pnic_info = ppkt->p_nic_info;
+  1040	
+  1041	    if (ZT_CANNOT_RUN(pnic_info))
+  1042	    {
+  1043	        return -2;
+  1044	    }
+  1045	
+  1046	    pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+  1047	    if (pwlan_mgmt_info == NULL)
+  1048	    {
+  1049	        WLAN_MGMT_ERROR("wlan_mgmt_info null pointer");
+  1050	        return -3;
+  1051	    }
+  1052	
+  1053	    mgmt_len = ppkt->len;
+  1054	    if (mgmt_len == 0)
+  1055	    {
+  1056	        WLAN_MGMT_ERROR("frame length zero");
+  1057	        return -5;
+  1058	    }
+  1059	    pmgmt = (void *)ppkt->pdata;
+  1060	
+  1061	    pwdn_info = ppkt->wdn_info;
+  1062	    if (pwdn_info)
+  1063	    {
+  1064	        pwdn_info->wdn_stats.rx_mgnt_pkts++;
+  1065	    }
+  1066	
+  1067	    frm_type = zt_80211_hdr_type_get(pmgmt);
+  1068	    switch (frm_type)
+  1069	    {
+  1070	        case ZT_80211_FRM_BEACON :
+  1071	            if (mgmt_len > ZT_80211_MGMT_BEACON_SIZE_MAX)
+  1072	            {
+  1073	                WLAN_MGMT_ERROR("beacon frame length(%d) over limited", mgmt_len);
+  1074	                return -6;
+  1075	            }
+  1076	
+  1077	            /* scan process filter */
+  1078	            rst = zt_scan_filter(pnic_info, pmgmt, mgmt_len);
+  1079	            if (rst)
+  1080	            {
+  1081	                WLAN_MGMT_DBG("scan filter fail, error code: %d", rst);
+  1082	                return -7;
+  1083	            }
+  1084	
+  1085	            /* send frame message */
+  1086	            rst = frm_msg_send(pwlan_mgmt_info, ZT_WLAN_MGMT_TAG_BEACON_FRAME,
+  1087	                               get_phy_status(ppkt), pmgmt, mgmt_len);
+  1088	            if (rst)
+  1089	            {
+  1090	                WLAN_MGMT_DBG("scan frame message send fail, error code: %d", rst);
+  1091	                return -8;
+  1092	            }
+  1093	
+  1094	            /* update becon timestamp*/
+  1095	            if (zt_80211_is_same_addr(pmgmt->bssid, zt_wlan_get_cur_bssid(pnic_info)))
+  1096	            {
+  1097	                zt_wlan_network_t *pcur_network = &pwlan_mgmt_info->cur_network;
+  1098	                //              WLAN_MGMT_DBG("update beacon timestamp");
+  1099	                pcur_network->timestamp = pmgmt->beacon.timestamp;
+  1100	                pcur_network->bcn_interval = pmgmt->beacon.intv;
+  1101	                //              WLAN_MGMT_DBG("beacon.timestamp:%lld",pcur_network->timestamp);
+  1102	            }
+  1103	
+  1104	#ifdef CFG_ENABLE_ADHOC_MODE
+  1105	            if (zt_local_cfg_get_work_mode(pnic_info) == ZT_ADHOC_MODE)
+  1106	            {
+  1107	                zt_adhoc_work(pnic_info, (void *)pmgmt, mgmt_len);
+  1108	            }
+  1109	#endif
+  1110	            break;
+  1111	
+  1112	        case ZT_80211_FRM_PROBE_REQ :
+  1113	            if (zt_p2p_is_valid(pnic_info))
+  1114	            {
+  1115	                if (mgmt_len > ZT_WLAN_MGMT_TAG_PROBEREQ_P2P_SIZE_MAX)
+  1116	                {
+  1117	                    WLAN_MGMT_ERROR("probe req frame length(%d) over limited", mgmt_len);
+  1118	                    return -6;
+  1119	                }
+  1120	                /* send frame message */
+  1121	                rst = frm_msg_send(pwlan_mgmt_info, ZT_WLAN_MGMT_TAG_PROBEREQ_P2P,
+  1122	                                   get_phy_status(ppkt), pmgmt, mgmt_len);
+  1123	                if (rst)
+  1124	                {
+  1125	                    WLAN_MGMT_DBG("probe req frame message send fail, error code: %d", rst);
+  1126	                    return -7;
+  1127	                }
+  1128	            }
+  1129	#if defined(CFG_ENABLE_ADHOC_MODE)
+  1130	            if (zt_local_cfg_get_work_mode(pnic_info) == ZT_ADHOC_MODE)
+  1131	            {
+  1132	                zt_adhoc_do_probrsp(pnic_info, pmgmt, mgmt_len);
+  1133	                break;
+  1134	            }
+  1135	#endif
+  1136	
+  1137	#ifdef CFG_ENABLE_AP_MODE
+  1138	            if (zt_local_cfg_get_work_mode(pnic_info) == ZT_MASTER_MODE)
+  1139	            {
+  1140	                zt_ap_probe_parse(pnic_info, pmgmt, mgmt_len);
+  1141	            }
+  1142	#endif
+  1143	            break;
+  1144	
+  1145	        case ZT_80211_FRM_PROBE_RESP :
+  1146	            if (mgmt_len > ZT_80211_MGMT_PROBERSP_SIZE_MAX)
+  1147	            {
+  1148	                WLAN_MGMT_ERROR("probersp frame length(%d) over limited", mgmt_len);
+  1149	                return -9;
+  1150	            }
+  1151	
+  1152	            /* scan process filter */
+  1153	            rst = zt_scan_filter(pnic_info, pmgmt, mgmt_len);
+  1154	            if (rst)
+  1155	            {
+  1156	                WLAN_MGMT_DBG("scan filter fail, error code: %d", rst);
+  1157	                return -10;
+  1158	            }
+  1159	
+  1160	            /* send frame message */
+  1161	            rst = frm_msg_send(pwlan_mgmt_info, ZT_WLAN_MGMT_TAG_PROBERSP_FRAME,
+  1162	                               get_phy_status(ppkt), pmgmt, mgmt_len);
+  1163	            if (rst)
+  1164	            {
+  1165	                WLAN_MGMT_DBG("scan frame message send fail, error code: %d", rst);
+  1166	                return -11;
+  1167	            }
+  1168	            break;
+  1169	
+  1170	        case ZT_80211_FRM_AUTH :
+  1171	            zt_auth_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);
+  1172	            break;
+  1173	
+  1174	        case ZT_80211_FRM_DEAUTH :
+  1175	            zt_deauth_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);
+  1176	            break;
+  1177	
+  1178	#ifdef CFG_ENABLE_AP_MODE
+  1179	        case ZT_80211_FRM_ASSOC_REQ :
+  1180	        case ZT_80211_FRM_REASSOC_REQ :
+  1181	            zt_assoc_ap_work(pnic_info, pwdn_info, (void *)pmgmt, mgmt_len);
+  1182	            break;
+  1183	#endif
+  1184	
+  1185	        case ZT_80211_FRM_ASSOC_RESP :
+  1186	        case ZT_80211_FRM_REASSOC_RESP :
+  1187	            zt_assoc_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);
+  1188	            break;
+  1189	
+  1190	        case ZT_80211_FRM_DISASSOC :
+  1191	            zt_disassoc_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);
+  1192	            break;
+  1193	
+  1194	        case ZT_80211_FRM_ACTION :
+  1195	            if (mgmt_len > ZT_80211_MGMT_BEACON_SIZE_MAX)
+  1196	            {
+  1197	                WLAN_MGMT_ERROR("action frame length(%d) over limited", mgmt_len);
+  1198	                return -6;
+  1199	            }
+  1200	            /* send frame message */
+  1201	            rst = frm_msg_send(pwlan_mgmt_info, ZT_WLAN_MGMT_TAG_ACTION,
+  1202	                               get_phy_status(ppkt), pmgmt, mgmt_len);
+  1203	            if (rst)
+  1204	            {
+  1205	                WLAN_MGMT_DBG("action frame message send fail, error code: %d", rst);
+  1206	                return -7;
+  1207	            }
+  1208	            break;
+  1209	
+  1210	        default :
+  1211	            WLAN_MGMT_WARN("untreated frame type: %d", frm_type);
+  1212	            break;
+  1213	    }
+  1214	
+  1215	    return 0;
+  1216	}
+  1217	
+  1218	static zt_s32 wlan_mgmt_scan_que_init(nic_info_st *pnic_info)
+  1219	{
+  1220	    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+===== MANAGEMENT IE STRUCTURE =====
+src/nic/adhoc.c-63-    pibss[0] = 0x02;
+src/nic/adhoc.c-64-    pibss[1] = 0x11;
+src/nic/adhoc.c-65-    pibss[2] = 0x22;
+src/nic/adhoc.c-66-}
+src/nic/adhoc.c-67-
+src/nic/adhoc.c-68-static zt_u8 adhoc_check_beacon(zt_wlan_network_t *pcur_network,
+src/nic/adhoc.c-69-                                zt_80211_mgmt_t *pmgmt, zt_u16 mgmt_len)
+src/nic/adhoc.c-70-{
+src/nic/adhoc.c:71:    zt_80211_mgmt_ie_t *pie;
+src/nic/adhoc.c-72-    zt_u8 *pies = &pmgmt->beacon.variable[0];
+src/nic/adhoc.c-73-    zt_u16 ies_len = mgmt_len;
+src/nic/adhoc.c-74-
+src/nic/adhoc.c-75-    if (zt_80211_hdr_type_get(pmgmt) != ZT_80211_FRM_BEACON)
+src/nic/adhoc.c-76-    {
+src/nic/adhoc.c-77-        return 0;
+src/nic/adhoc.c-78-    }
+src/nic/adhoc.c-79-
+src/nic/adhoc.c-80-    ADHOC_DBG();
+src/nic/adhoc.c-81-    if (zt_80211_mgmt_ies_search(pies, ies_len, ZT_80211_MGMT_EID_SSID, &pie))
+src/nic/adhoc.c-82-    {
+src/nic/adhoc.c-83-        return 0;
+--
+src/nic/adhoc.c-247-zt_pt_ret_t zt_adhoc_prc_bcn(nic_info_st *pnic_info, zt_msg_t *pmsg,
+src/nic/adhoc.c-248-                             wdn_net_info_st *pwdn_info)
+src/nic/adhoc.c-249-{
+src/nic/adhoc.c-250-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/adhoc.c-251-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/adhoc.c-252-    zt_80211_mgmt_t *pmgmt;
+src/nic/adhoc.c-253-    zt_u16 var_len = 0, ofs;
+src/nic/adhoc.c-254-    zt_u8 *pvar = NULL;
+src/nic/adhoc.c:255:    zt_80211_mgmt_ie_t *pie;
+src/nic/adhoc.c-256-    zt_u8 i, j;
+src/nic/adhoc.c-257-    zt_80211_frame_e frame_type;
+src/nic/adhoc.c-258-
+src/nic/adhoc.c-259-    ADHOC_DBG();
+src/nic/adhoc.c-260-    if (pmsg == NULL)
+src/nic/adhoc.c-261-    {
+src/nic/adhoc.c-262-
+src/nic/adhoc.c-263-        ADHOC_WARN("MSG---IS---NULL-----");
+src/nic/adhoc.c-264-        /* abort thread */
+src/nic/adhoc.c-265-        return -1;
+src/nic/adhoc.c-266-    }
+src/nic/adhoc.c-267-
+--
+src/nic/adhoc.c-285-    /* element variable fields */
+src/nic/adhoc.c-286-    if (frame_type == ZT_80211_FRM_BEACON)
+src/nic/adhoc.c-287-    {
+src/nic/adhoc.c-288-        pvar = pmgmt->beacon.variable;
+src/nic/adhoc.c-289-        var_len = pmsg->len - ZT_OFFSETOF(zt_80211_mgmt_t, beacon.variable);
+src/nic/adhoc.c-290-    }
+src/nic/adhoc.c-291-
+src/nic/adhoc.c-292-    for (ofs = 0; ofs < var_len;
+src/nic/adhoc.c:293:            ofs += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len)
+src/nic/adhoc.c-294-    {
+src/nic/adhoc.c-295-        pie = (void *)&pvar[ofs];
+src/nic/adhoc.c-296-
+src/nic/adhoc.c-297-        if (pie->element_id == ZT_80211_MGMT_EID_SUPP_RATES)
+src/nic/adhoc.c-298-        {
+src/nic/adhoc.c-299-            if (pie->len > ZT_ARRAY_SIZE(pwdn_info->datarate))
+src/nic/adhoc.c-300-            {
+src/nic/adhoc.c-301-                ADHOC_WARN("rates(%d) list size over limite", pie->len);
+src/nic/adhoc.c-302-
+src/nic/adhoc.c-303-                return -1;
+src/nic/adhoc.c-304-            }
+src/nic/adhoc.c-305-            /* check and retrieve rate */
+--
+src/nic/adhoc.c-439-                           zt_80211_mgmt_t *pframe, zt_u16 mgmt_len)
+src/nic/adhoc.c-440-{
+src/nic/adhoc.c-441-    struct xmit_buf *pxmit_buf;
+src/nic/adhoc.c-442-    tx_info_st *ptx_info;
+src/nic/adhoc.c-443-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/adhoc.c-444-    hw_info_st *hw_info = pnic_info->hw_info;
+src/nic/adhoc.c-445-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/adhoc.c-446-    zt_80211_mgmt_t *pmgmt;
+src/nic/adhoc.c:447:    zt_80211_mgmt_ie_t *pie;
+src/nic/adhoc.c-448-    zt_u8 *pies = &pframe->probe_req.variable[0];
+src/nic/adhoc.c-449-    zt_u16 ies_len = mgmt_len;
+src/nic/adhoc.c-450-
+src/nic/adhoc.c-451-    if (zt_get_adhoc_master(pnic_info) == zt_false)
+src/nic/adhoc.c-452-    {
+src/nic/adhoc.c-453-        return 0;
+src/nic/adhoc.c-454-    }
+src/nic/adhoc.c-455-
+src/nic/adhoc.c-456-    if (zt_80211_mgmt_ies_search(pies, ies_len, ZT_80211_MGMT_EID_SSID, &pie))
+src/nic/adhoc.c-457-    {
+src/nic/adhoc.c-458-        ADHOC_WARN("no ssid element field");
+src/nic/adhoc.c-459-        return -1;
+--
+src/nic/ap.c-816-    if (!(zt_80211_is_same_addr(pframe->da, pcur_network->mac_addr) ||
+src/nic/ap.c-817-            zt_80211_is_bcast_addr(pframe->da)))
+src/nic/ap.c-818-    {
+src/nic/ap.c-819-       // AP_WARN("probe request target address invalid");
+src/nic/ap.c-820-        return -4;
+src/nic/ap.c-821-    }
+src/nic/ap.c-822-
+src/nic/ap.c-823-    {
+src/nic/ap.c:824:        zt_80211_mgmt_ie_t *pies = (void *)pframe->probe_req.variable, *pie;
+src/nic/ap.c-825-        zt_u16 ies_len = ZT_OFFSETOF(zt_80211_mgmt_t, probe_req.variable);
+src/nic/ap.c-826-        zt_wlan_ssid_t *local_ssid =
+src/nic/ap.c-827-            pcur_network->hidden_ssid_mode != ZT_80211_HIDDEN_SSID_NOT_IN_USE ?
+src/nic/ap.c-828-            &pcur_network->hidden_ssid : &pcur_network->ssid;
+src/nic/ap.c-829-
+src/nic/ap.c-830-        if (zt_80211_mgmt_ies_search(pies, ies_len, ZT_80211_MGMT_EID_SSID, &pie))
+src/nic/ap.c-831-        {
+src/nic/ap.c-832-            AP_WARN("missing ie of ssid filed");
+src/nic/ap.c-833-            return -5;
+src/nic/ap.c-834-        }
+src/nic/ap.c-835-
+src/nic/ap.c-836-        if (pie->len && (pie->len != local_ssid->length ||
+--
+src/nic/ap.c-1077-                               pcur_network->bw,
+src/nic/ap.c-1078-                               pcur_network->channle_offset);
+src/nic/ap.c-1079-}
+src/nic/ap.c-1080-
+src/nic/ap.c-1081-void reset_beacon_channel(nic_info_st *pnic_info, zt_u8 channel)
+src/nic/ap.c-1082-{
+src/nic/ap.c-1083-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/ap.c-1084-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/ap.c:1085:    zt_80211_mgmt_ie_t *pie;
+src/nic/ap.c-1086-    zt_u16 ofs;
+src/nic/ap.c-1087-
+src/nic/ap.c-1088-    LOG_I("%s nic_num:%d  channel:%d", __func__, pnic_info->nic_num, channel);
+src/nic/ap.c-1089-
+src/nic/ap.c-1090-    if (pnic_info == NULL)
+src/nic/ap.c-1091-    {
+src/nic/ap.c-1092-        LOG_E("pnic NULL");
+src/nic/ap.c-1093-        return;
+src/nic/ap.c-1094-    }
+src/nic/ap.c-1095-    if (pcur_network->ies[0] == '\0')
+src/nic/ap.c-1096-    {
+src/nic/ap.c-1097-        LOG_E("ie NULL");
+src/nic/ap.c-1098-        return;
+src/nic/ap.c-1099-    }
+src/nic/ap.c-1100-
+src/nic/ap.c-1101-    for (ofs = 0; ofs < pcur_network->ies_length;
+src/nic/ap.c:1102:            ofs += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len)
+src/nic/ap.c-1103-    {
+src/nic/ap.c-1104-        pie = (void *)&pcur_network->ies[ofs];
+src/nic/ap.c-1105-
+src/nic/ap.c-1106-        if (pie->element_id == ZT_80211_MGMT_EID_DS_PARAMS)
+src/nic/ap.c-1107-        {
+src/nic/ap.c-1108-            pie->data[0] = channel;
+src/nic/ap.c-1109-            LOG_D("%s  channel:%d", __func__, channel);
+src/nic/ap.c-1110-            break;
+src/nic/ap.c-1111-        }
+src/nic/ap.c-1112-    }
+src/nic/ap.c-1113-}
+src/nic/ap.c-1114-
+--
+src/nic/ap.c-1118-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/ap.c-1119-    sec_info_st *psec_info = pnic_info->sec_info;
+src/nic/ap.c-1120-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/ap.c-1121-    hw_info_st *phw_info = (hw_info_st *)pnic_info->hw_info;
+src/nic/ap.c-1122-    zt_u32 ies_len;
+src/nic/ap.c-1123-    struct beacon_ie *pies;
+src/nic/ap.c-1124-    zt_u16 var_len, ofs;
+src/nic/ap.c-1125-    zt_u8 *pvar;
+src/nic/ap.c:1126:    zt_80211_mgmt_ie_t *pie;
+src/nic/ap.c-1127-    zt_80211_wmm_param_ie_t *pwmm_ie;
+src/nic/ap.c-1128-    zt_80211_mgmt_ht_cap_t *pht_cap = NULL;
+src/nic/ap.c-1129-    zt_80211_mgmt_ht_operation_t *pht_oper;
+src/nic/ap.c-1130-    zt_u16 i, j;
+src/nic/ap.c-1131-    zt_bool bConnect;
+src/nic/ap.c-1132-    wdn_net_info_st *pwdn = NULL;
+src/nic/ap.c-1133-
+src/nic/ap.c-1134-    AP_DBG();
+src/nic/ap.c-1135-
+src/nic/ap.c-1136-    ies_len = len;
+src/nic/ap.c-1137-    if (ies_len <= ZT_OFFSETOF(struct beacon_ie, variable))
+src/nic/ap.c-1138-    {
+--
+src/nic/ap.c-1170-    pcur_network->ies_length = var_len;
+src/nic/ap.c-1171-    //    AP_ARRAY(pcur_network->ies, ies_len);
+src/nic/ap.c-1172-    pcur_network->tim_bitmap = 0x0;
+src/nic/ap.c-1173-    zt_ap_update_beacon(pnic_info, ZT_80211_MGMT_EID_TIM, NULL, zt_false);
+src/nic/ap.c-1174-    zt_ap_update_beacon(pnic_info, ZT_80211_MGMT_EID_VENDOR_SPECIFIC, WPS_OUI, zt_false);
+src/nic/ap.c-1175-
+src/nic/ap.c-1176-    /* checkout ie variable field */
+src/nic/ap.c-1177-    for (ofs = 0; ofs < var_len;
+src/nic/ap.c:1178:            ofs += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len)
+src/nic/ap.c-1179-    {
+src/nic/ap.c-1180-        pie = (void *)&pvar[ofs];
+src/nic/ap.c-1181-
+src/nic/ap.c-1182-        switch (pie->element_id)
+src/nic/ap.c-1183-        {
+src/nic/ap.c-1184-            case ZT_80211_MGMT_EID_SSID :
+src/nic/ap.c-1185-                if (pie->len >= sizeof(pcur_network->ssid.data))
+src/nic/ap.c-1186-                {
+src/nic/ap.c-1187-                    AP_WARN("ssid length(%d) over limite", pie->len);
+src/nic/ap.c-1188-                    break;
+src/nic/ap.c-1189-                }
+src/nic/ap.c-1190-                pcur_network->ssid.length = pie->len;
+--
+src/nic/ap.c-1276-                       (pcur_network->rate[15] & 0x7F) / 2);
+src/nic/ap.c-1277-                break;
+src/nic/ap.c-1278-
+src/nic/ap.c-1279-            case ZT_80211_MGMT_EID_ERP_INFO :
+src/nic/ap.c-1280-                break;
+src/nic/ap.c-1281-
+src/nic/ap.c-1282-            case ZT_80211_MGMT_EID_RSN :
+src/nic/ap.c-1283-                if (!zt_80211_mgmt_rsn_parse(pie,
+src/nic/ap.c:1284:                                             ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len,
+src/nic/ap.c-1285-                                             &psec_info->rsn_group_cipher,
+src/nic/ap.c-1286-                                             &psec_info->rsn_pairwise_cipher))
+src/nic/ap.c-1287-                {
+src/nic/ap.c-1288-                    /* PSK */
+src/nic/ap.c-1289-                    psec_info->dot11AuthAlgrthm = dot11AuthAlgrthm_8021X;
+src/nic/ap.c-1290-                    psec_info->wpa_psk |= ZT_BIT(1);
+src/nic/ap.c-1291-                    AP_DBG("RSN element");
+src/nic/ap.c-1292-                    break;
+src/nic/ap.c-1293-                }
+src/nic/ap.c-1294-
+src/nic/ap.c-1295-            case ZT_80211_MGMT_EID_VENDOR_SPECIFIC :
+src/nic/ap.c-1296-            {
+src/nic/ap.c-1297-                zt_u32 wpa_multicast_cipher;
+src/nic/ap.c-1298-                zt_u32 wpa_unicast_cipher;
+src/nic/ap.c-1299-                if (!zt_80211_mgmt_wpa_parse(pie,
+src/nic/ap.c:1300:                                             ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len,
+src/nic/ap.c-1301-                                             &wpa_multicast_cipher,
+src/nic/ap.c-1302-                                             &wpa_unicast_cipher))
+src/nic/ap.c-1303-                {
+src/nic/ap.c-1304-                    psec_info->wpa_multicast_cipher = wpa_multicast_cipher;
+src/nic/ap.c-1305-                    psec_info->wpa_unicast_cipher = wpa_unicast_cipher;
+src/nic/ap.c-1306-                    psec_info->dot11AuthAlgrthm = dot11AuthAlgrthm_8021X;
+src/nic/ap.c-1307-                    psec_info->wpa_psk |= ZT_BIT(0);
+src/nic/ap.c-1308-                    AP_DBG("WPA element");
+src/nic/ap.c-1309-                }
+src/nic/ap.c-1310-                else if (!zt_80211_mgmt_wmm_parse(pie,
+src/nic/ap.c:1311:                                                  ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len))
+src/nic/ap.c-1312-                {
+src/nic/ap.c-1313-                    zt_memcpy(&pcur_network->pwmm, pie, sizeof(pcur_network->pwmm));
+src/nic/ap.c-1314-                    /* adjust WMM information */
+src/nic/ap.c-1315-                    pwmm_ie = (void *)pie;
+src/nic/ap.c-1316-                    pwmm_ie->qos_info |= ZT_80211_MGMT_WMM_IE_AP_QOSINFO_UAPSD;
+src/nic/ap.c-1317-                    /* disable ACM for BE BK VI VO */
+src/nic/ap.c-1318-                    for (i = 0; i < ZT_ARRAY_SIZE(pwmm_ie->ac); i++)
+src/nic/ap.c-1319-                    {
+src/nic/ap.c-1320-                        pwmm_ie->ac[i].aci_aifsn &= ~ ZT_BIT(4);
+src/nic/ap.c-1321-                    }
+src/nic/ap.c-1322-                    AP_DBG("WMM element");
+src/nic/ap.c-1323-                }
+src/nic/ap.c-1324-                else if (zt_p2p_is_valid(pnic_info) &&
+src/nic/ap.c:1325:                         !zt_p2p_parse_p2pie(pnic_info, pie, ZT_OFFSETOF(zt_80211_mgmt_ie_t,
+src/nic/ap.c-1326-                                             data) + pie->len, ZT_P2P_IE_BEACON))
+src/nic/ap.c-1327-                {
+src/nic/ap.c-1328-                    AP_DBG("p2p element");
+src/nic/ap.c-1329-                }
+src/nic/ap.c-1330-            }
+src/nic/ap.c-1331-            break;
+src/nic/ap.c-1332-
+src/nic/ap.c-1333-            case ZT_80211_MGMT_EID_HT_CAPABILITY :
+src/nic/ap.c-1334-                ((zt_80211_mgmt_ht_cap_t *)pie->data)->cap_info |= ZT_BIT(7);
+src/nic/ap.c-1335-                zt_memcpy(&pcur_network->pht_cap, pie->data, pie->len);
+src/nic/ap.c-1336-                pht_cap = &pcur_network->pht_cap;
+src/nic/ap.c-1337-                pcur_network->ht_enable = zt_true;
+--
+src/nic/assoc.c-141-    tx_info_st *ptx_info = pnic_info->tx_info;
+src/nic/assoc.c-142-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/assoc.c-143-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/assoc.c-144-    struct xmit_buf *pxmit_buf;
+src/nic/assoc.c-145-    zt_80211_mgmt_t *passoc_frame;
+src/nic/assoc.c-146-    zt_u16 tmp_16;
+src/nic/assoc.c-147-    zt_u8 *pvar;
+src/nic/assoc.c-148-    zt_u16 var_len = 0;
+src/nic/assoc.c:149:    zt_80211_mgmt_ie_t *pie;
+src/nic/assoc.c-150-
+src/nic/assoc.c-151-    /* alloc xmit_buf */
+src/nic/assoc.c-152-    pxmit_buf = zt_xmit_extbuf_new(ptx_info);
+src/nic/assoc.c-153-    if (pxmit_buf == NULL)
+src/nic/assoc.c-154-    {
+src/nic/assoc.c-155-        ASSOC_ERROR("xmit_buf alloc fail");
+src/nic/assoc.c-156-        return -1;
+src/nic/assoc.c-157-    }
+src/nic/assoc.c-158-    zt_memset(pxmit_buf->pbuf, 0,
+src/nic/assoc.c-159-              TXDESC_OFFSET + ZT_OFFSETOF(zt_80211_mgmt_t, assoc_resp));
+src/nic/assoc.c-160-
+src/nic/assoc.c-161-    /* set frame type */
+--
+src/nic/assoc.c-199-     */
+src/nic/assoc.c-200-    pvar = passoc_frame->assoc_resp.variable;
+src/nic/assoc.c-201-
+src/nic/assoc.c-202-    /* set support rate */
+src/nic/assoc.c-203-    pie = (void *)&pvar[var_len];
+src/nic/assoc.c-204-    pie->element_id = ZT_80211_MGMT_EID_SUPP_RATES;
+src/nic/assoc.c-205-    pie->len = ZT_80211_BASIC_RATE_NUM;
+src/nic/assoc.c-206-    zt_memcpy(pie->data, pwdn_info->datarate, pie->len);
+src/nic/assoc.c:207:    var_len += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-208-
+src/nic/assoc.c-209-    /* set extend support rate */
+src/nic/assoc.c-210-    if (pcur_network->rate_len > ZT_80211_BASIC_RATE_NUM)
+src/nic/assoc.c-211-    {
+src/nic/assoc.c-212-        pie = (void *)&pvar[var_len];
+src/nic/assoc.c-213-        pie->element_id = ZT_80211_MGMT_EID_EXT_SUPP_RATES;
+src/nic/assoc.c-214-        pie->len = pcur_network->rate_len - ZT_80211_BASIC_RATE_NUM;
+src/nic/assoc.c-215-        zt_memcpy(pie->data, pwdn_info->ext_datarate, pie->len);
+src/nic/assoc.c:216:        var_len += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-217-    }
+src/nic/assoc.c-218-
+src/nic/assoc.c-219-    /* set ht capability */
+src/nic/assoc.c-220-    if (pwdn_info->ht_enable)
+src/nic/assoc.c-221-    {
+src/nic/assoc.c-222-        pie = (void *)&pvar[var_len];
+src/nic/assoc.c-223-        pie->element_id = ZT_80211_MGMT_EID_HT_CAPABILITY;
+src/nic/assoc.c-224-        pie->len = sizeof(zt_80211_mgmt_ht_cap_t);
+src/nic/assoc.c-225-
+src/nic/assoc.c-226-        zt_memcpy(pie->data, &pcur_network->pht_cap, pie->len);
+src/nic/assoc.c:227:        var_len += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-228-
+src/nic/assoc.c-229-
+src/nic/assoc.c-230-        pie = (void *)&pvar[var_len];
+src/nic/assoc.c-231-        pie->element_id = ZT_80211_MGMT_EID_HT_OPERATION;
+src/nic/assoc.c-232-        pie->len = sizeof(zt_80211_mgmt_ht_operation_t);
+src/nic/assoc.c-233-        zt_memcpy(pie->data, &pcur_network->pht_oper, pie->len);
+src/nic/assoc.c:234:        var_len += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-235-    }
+src/nic/assoc.c-236-
+src/nic/assoc.c-237-    if (pwdn_info->wpa_enable || pwdn_info->rsn_enable)
+src/nic/assoc.c-238-    {
+src/nic/assoc.c-239-        ASSOC_DBG("wpa_enable");
+src/nic/assoc.c-240-        zt_memcpy(&pvar[var_len], &pwdn_info->wpa_ie, pwdn_info->wpa_ie_len);
+src/nic/assoc.c-241-        var_len += pwdn_info->wpa_ie_len;
+src/nic/assoc.c-242-    }
+src/nic/assoc.c-243-    /* set wmm */
+src/nic/assoc.c-244-    //    if (pwdn_info->wmm_enable)
+src/nic/assoc.c-245-    //    {
+src/nic/assoc.c-246-    //        ASSOC_DBG("wmm_enable");
+--
+src/nic/assoc.c-334-    zt_pt_t *pt = &pwdn_info->sub_thrd_pt;
+src/nic/assoc.c-335-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/assoc.c-336-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/assoc.c-337-    sec_info_st *psec_info = pnic_info->sec_info;
+src/nic/assoc.c-338-    zt_ap_msg_t *pmsg;
+src/nic/assoc.c-339-    zt_80211_mgmt_t *pmgmt;
+src/nic/assoc.c-340-    zt_u16 var_len, ofs;
+src/nic/assoc.c-341-    zt_u8 *pvar;
+src/nic/assoc.c:342:    zt_80211_mgmt_ie_t *pie;
+src/nic/assoc.c-343-    zt_u32 wpa_multicast_cipher;
+src/nic/assoc.c-344-    zt_u32 wpa_unicast_cipher;
+src/nic/assoc.c-345-    zt_u32 rsn_group_cipher;
+src/nic/assoc.c-346-    zt_u32 rsn_pairwise_cipher;
+src/nic/assoc.c-347-    zt_u8 i, j;
+src/nic/assoc.c-348-    zt_s32 ret;
+src/nic/assoc.c-349-    zt_80211_frame_e frame_type;
+src/nic/assoc.c-350-    zt_80211_statuscode_e status_code = ZT_80211_STATUS_SUCCESS;
+src/nic/assoc.c-351-    zt_u8 wpa_ie_len;
+src/nic/assoc.c-352-
+src/nic/assoc.c-353-    PT_BEGIN(pt);
+src/nic/assoc.c-354-
+--
+src/nic/assoc.c-402-    }
+src/nic/assoc.c-403-    else
+src/nic/assoc.c-404-    {
+src/nic/assoc.c-405-        pvar = pmsg->mgmt.reassoc_req.variable;
+src/nic/assoc.c-406-        var_len = pmsg->len - ZT_OFFSETOF(zt_80211_mgmt_t, reassoc_req.variable);
+src/nic/assoc.c-407-    }
+src/nic/assoc.c-408-
+src/nic/assoc.c-409-    for (ofs = 0; ofs < var_len;
+src/nic/assoc.c:410:            ofs += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len)
+src/nic/assoc.c-411-    {
+src/nic/assoc.c-412-        pie = (void *)&pvar[ofs];
+src/nic/assoc.c-413-        if (pie->element_id == ZT_80211_MGMT_EID_SSID)
+src/nic/assoc.c-414-        {
+src/nic/assoc.c-415-            if (pie->len == pcur_network->ssid.length &&
+src/nic/assoc.c-416-                    !zt_memcmp(pie->data, pcur_network->ssid.data, pie->len))
+src/nic/assoc.c-417-            {
+src/nic/assoc.c-418-                pwdn_info->ssid_len = pcur_network->ssid.length;
+src/nic/assoc.c-419-                zt_memcpy(pwdn_info->ssid, pcur_network->ssid.data,
+src/nic/assoc.c-420-                          pcur_network->ssid.length);
+src/nic/assoc.c-421-                pwdn_info->ssid[pwdn_info->ssid_len] = '\0';
+src/nic/assoc.c-422-            }
+--
+src/nic/assoc.c-581-            else
+src/nic/assoc.c-582-            {
+src/nic/assoc.c-583-                pwdn_info->network_type |= WIRELESS_11G;
+src/nic/assoc.c-584-            }
+src/nic/assoc.c-585-        }
+src/nic/assoc.c-586-
+src/nic/assoc.c-587-        else if (pie->element_id == ZT_80211_MGMT_EID_RSN)
+src/nic/assoc.c-588-        {
+src/nic/assoc.c:589:            wpa_ie_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-590-            if (!zt_80211_mgmt_rsn_parse(pie, wpa_ie_len,
+src/nic/assoc.c-591-                                         &rsn_group_cipher, &rsn_pairwise_cipher))
+src/nic/assoc.c-592-            {
+src/nic/assoc.c-593-                /* checkout group cipher */
+src/nic/assoc.c-594-                if (rsn_group_cipher != psec_info->rsn_group_cipher)
+src/nic/assoc.c-595-                {
+src/nic/assoc.c-596-                    ASSOC_WARN("RSN group cipher error");
+src/nic/assoc.c-597-                    status_error(pnic_info, pwdn_info,
+src/nic/assoc.c-598-                                 pmsg, frame_type,
+src/nic/assoc.c-599-                                 ZT_80211_STATUS_INVALID_GROUP_CIPHER);
+src/nic/assoc.c-600-                    /* abort thread */
+src/nic/assoc.c-601-                    PT_EXIT(pt);
+--
+src/nic/assoc.c-628-                /* abort thread */
+src/nic/assoc.c-629-                PT_EXIT(pt);
+src/nic/assoc.c-630-            }
+src/nic/assoc.c-631-        }
+src/nic/assoc.c-632-
+src/nic/assoc.c-633-        else if (pie->element_id == ZT_80211_MGMT_EID_VENDOR_SPECIFIC)
+src/nic/assoc.c-634-        {
+src/nic/assoc.c-635-            /* wpa parse */
+src/nic/assoc.c:636:            wpa_ie_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/nic/assoc.c-637-            ret = zt_80211_mgmt_wpa_parse(pie, wpa_ie_len,
+src/nic/assoc.c-638-                                          &wpa_multicast_cipher, &wpa_unicast_cipher);
+src/nic/assoc.c-639-            if (ret < 0 && ret >= -3)
+src/nic/assoc.c-640-            {
+src/nic/assoc.c-641-                ASSOC_WARN("vendor ie corrupt");
+src/nic/assoc.c-642-                status_error(pnic_info, pwdn_info,
+src/nic/assoc.c-643-                             pmsg, frame_type,
+src/nic/assoc.c-644-                             ZT_80211_STATUS_INVALID_IE);
+src/nic/assoc.c-645-                /* abort thread */
+src/nic/assoc.c-646-                PT_EXIT(pt);
+src/nic/assoc.c-647-            }
+src/nic/assoc.c-648-            if (!ret)
+--
+src/nic/assoc.c-675-                    ZT_MIN(sizeof(pwdn_info->wpa_ie), wpa_ie_len);
+src/nic/assoc.c-676-                zt_memcpy(pwdn_info->wpa_ie, pie, wpa_ie_len);
+src/nic/assoc.c-677-                pwdn_info->wpa_ie_len = wpa_ie_len;
+src/nic/assoc.c-678-                pwdn_info->wpa_enable = zt_true;
+src/nic/assoc.c-679-            }
+src/nic/assoc.c-680-
+src/nic/assoc.c-681-            /* wmm parse */
+src/nic/assoc.c-682-            ret = zt_80211_mgmt_wmm_parse(pie,
+src/nic/assoc.c:683:                                          ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len);
+src/nic/assoc.c-684-            if (ret < 0 && ret >= -2)
+src/nic/assoc.c-685-            {
+src/nic/assoc.c-686-                ASSOC_WARN("vendor ie corrupt");
+src/nic/assoc.c-687-                status_error(pnic_info, pwdn_info,
+src/nic/assoc.c-688-                             pmsg, frame_type,
+src/nic/assoc.c-689-                             ZT_80211_STATUS_INVALID_IE);
+src/nic/assoc.c-690-                /* abort thread */
+src/nic/assoc.c-691-                PT_EXIT(pt);
+src/nic/assoc.c-692-            }
+src/nic/assoc.c-693-            if (!ret)
+src/nic/assoc.c-694-            {
+src/nic/assoc.c-695-                ASSOC_DBG("WMM element");
+src/nic/assoc.c-696-                pwdn_info->wmm_enable = zt_true;
+src/nic/assoc.c:697:                zt_memcpy(&pwdn_info->wmm_info, pie, ZT_OFFSETOF(zt_80211_mgmt_ie_t,
+src/nic/assoc.c-698-                          data) + pie->len);
+src/nic/assoc.c-699-            }
+src/nic/assoc.c-700-
+src/nic/assoc.c-701-            if (zt_p2p_is_valid(pnic_info))
+src/nic/assoc.c-702-            {
+src/nic/assoc.c:703:                ret = zt_p2p_parse_p2pie(pnic_info, pie, ZT_OFFSETOF(zt_80211_mgmt_ie_t,
+src/nic/assoc.c-704-                                         data) + pie->len, ZT_P2P_IE_ASSOC_REQ);
+src/nic/assoc.c-705-                if (0 == ret)
+src/nic/assoc.c-706-                {
+src/nic/assoc.c-707-                    ASSOC_DBG("p2p element");
+src/nic/assoc.c-708-                    pwdn_info->is_p2p_device = 1;
+src/nic/assoc.c:709:                    zt_p2p_proc_assoc_req(pnic_info, (zt_u8 *)pie, ZT_OFFSETOF(zt_80211_mgmt_ie_t,
+src/nic/assoc.c-710-                                          data) + pie->len, pwdn_info, 1);
+src/nic/assoc.c-711-                }
+src/nic/assoc.c-712-            }
+src/nic/assoc.c-713-        }
+src/nic/assoc.c-714-
+src/nic/assoc.c-715-        else if (pie->element_id == ZT_80211_MGMT_EID_HT_CAPABILITY)
+src/nic/assoc.c-716-        {
+src/nic/assoc.c-717-            ASSOC_DBG("ht capability");
+src/nic/assoc.c-718-            if (pcur_network->ht_enable == zt_false)
+src/nic/assoc.c-719-            {
+src/nic/assoc.c-720-                ASSOC_WARN("no support ht capability");
+src/nic/assoc.c-721-                status_error(pnic_info, pwdn_info,
+--
+src/nic/assoc.c-808-static zt_s32 associate_xmit_frame(nic_info_st *nic_info)
+src/nic/assoc.c-809-{
+src/nic/assoc.c-810-    zt_u8 *pframe;
+src/nic/assoc.c-811-    struct wl_ieee80211_hdr *pwlanhdr = NULL;
+src/nic/assoc.c-812-    struct xmit_buf *pxmit_buf;
+src/nic/assoc.c-813-    zt_wlan_mgmt_info_t *wlan_mgmt_info = nic_info->wlan_mgmt_info;
+src/nic/assoc.c-814-    zt_wlan_network_t *pcur_network = &wlan_mgmt_info->cur_network;
+src/nic/assoc.c-815-    zt_u32 pkt_len;
+src/nic/assoc.c:816:    zt_80211_mgmt_ie_t *pie;
+src/nic/assoc.c-817-    wdn_net_info_st *wdn_info;
+src/nic/assoc.c-818-    tx_info_st *tx_info = (tx_info_st *)nic_info->tx_info;
+src/nic/assoc.c-819-    hw_info_st *hw_info = nic_info->hw_info;
+src/nic/assoc.c-820-    sec_info_st *sec_info = nic_info->sec_info;
+src/nic/assoc.c-821-    zt_u8 WMM_IE[] = { 0x00, 0x50, 0xf2, 0x02, 0x00, 0x01, 0x00 };
+src/nic/assoc.c-822-    zt_s32 ret = 0;
+src/nic/assoc.c-823-    //ASSOC_DBG();
+src/nic/assoc.c-824-
+src/nic/assoc.c-825-    /* alloc xmit_buf */
+src/nic/assoc.c-826-    pxmit_buf = zt_xmit_extbuf_new(tx_info);
+src/nic/assoc.c-827-    if (pxmit_buf == NULL)
+src/nic/assoc.c-828-    {
+--
+src/nic/assoc.c-891-
+src/nic/assoc.c-892-    /* power cabability */
+src/nic/assoc.c-893-
+src/nic/assoc.c-894-    /* Supported Channels */
+src/nic/assoc.c-895-
+src/nic/assoc.c-896-    /* WPA */
+src/nic/assoc.c-897-    if (sec_info->wpa_enable)
+src/nic/assoc.c-898-    {
+src/nic/assoc.c:899:        pie = (zt_80211_mgmt_ie_t *)sec_info->supplicant_ie;
+src/nic/assoc.c-900-        pframe = set_ie(pframe, ZT_80211_MGMT_EID_VENDOR_SPECIFIC, pie->len, pie->data,
+src/nic/assoc.c-901-                        &pkt_len);
+src/nic/assoc.c-902-    }
+src/nic/assoc.c-903-
+src/nic/assoc.c-904-    /* RSN */
+src/nic/assoc.c-905-    else if (sec_info->rsn_enable)
+src/nic/assoc.c-906-    {
+src/nic/assoc.c:907:        pie = (zt_80211_mgmt_ie_t *)sec_info->supplicant_ie;
+src/nic/assoc.c-908-        if (pie->len != 20) {
+src/nic/assoc.c-909-            pie->len = 20;
+src/nic/assoc.c-910-            pie->data[18] = 0x00;
+src/nic/assoc.c-911-            pie->data[19] = 0x00;
+src/nic/assoc.c-912-        }
+src/nic/assoc.c-913-        pframe = set_ie(pframe, ZT_80211_MGMT_EID_RSN, pie->len, pie->data, &pkt_len);
+src/nic/assoc.c-914-    }
+src/nic/assoc.c-915-
+src/nic/assoc.c-916-    /* QoS Capability */
+src/nic/assoc.c-917-    if (wdn_info->wmm_enable)
+src/nic/assoc.c-918-    {
+src/nic/assoc.c-919-        pframe = set_ie(pframe, ZT_80211_MGMT_EID_VENDOR_SPECIFIC, 7, (zt_u8 *)WMM_IE,
+--
+src/nic/auth.c-31-
+src/nic/auth.c-32-static zt_s32 auth_send(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
+src/nic/auth.c-33-                        zt_80211_statuscode_e status)
+src/nic/auth.c-34-{
+src/nic/auth.c-35-    struct xmit_buf *pxmit_buf;
+src/nic/auth.c-36-    tx_info_st *ptx_info = (void *)pnic_info->tx_info;
+src/nic/auth.c-37-    sec_info_st *psec_info = pnic_info->sec_info;
+src/nic/auth.c-38-    zt_80211_mgmt_t *pauth_frame;
+src/nic/auth.c:39:    zt_80211_mgmt_ie_t *pie;
+src/nic/auth.c-40-    zt_u16 frame_len = 0;
+src/nic/auth.c-41-    zt_u32 tmp_32;
+src/nic/auth.c-42-    zt_u16 tmp_16;
+src/nic/auth.c-43-
+src/nic/auth.c-44-    /* alloc xmit_buf */
+src/nic/auth.c-45-    pxmit_buf = zt_xmit_extbuf_new(ptx_info);
+src/nic/auth.c-46-    if (pxmit_buf == NULL)
+src/nic/auth.c-47-    {
+src/nic/auth.c-48-        AUTH_WARN("xmit_buf alloc fail");
+src/nic/auth.c-49-        return -1;
+src/nic/auth.c-50-    }
+src/nic/auth.c-51-    zt_memset(pxmit_buf->pbuf, 0,
+--
+src/nic/auth.c-97-            if (status == ZT_80211_STATUS_SUCCESS &&
+src/nic/auth.c-98-                    pwdn_info->auth_algo == ZT_80211_AUTH_ALGO_SHARED_KEY)
+src/nic/auth.c-99-            {
+src/nic/auth.c-100-                pie = (void *)pauth_frame->auth.variable;
+src/nic/auth.c-101-                pie->element_id = ZT_80211_MGMT_EID_CHALLENGE;
+src/nic/auth.c-102-                pie->len = ZT_80211_AUTH_CHALLENGE_LEN;
+src/nic/auth.c-103-                zt_memcpy(pie->data, pwdn_info->chlg_txt, pie->len);
+src/nic/auth.c-104-                /* add challenge text length */
+src/nic/auth.c:105:                frame_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) +
+src/nic/auth.c-106-                            ZT_80211_AUTH_CHALLENGE_LEN;
+src/nic/auth.c-107-            }
+src/nic/auth.c-108-            /* update frame length */
+src/nic/auth.c-109-            frame_len += ZT_OFFSETOF(zt_80211_mgmt_t, auth.variable);
+src/nic/auth.c-110-            break;
+src/nic/auth.c-111-#endif
+src/nic/auth.c-112-
+src/nic/auth.c-113-        case ZT_80211_AUTH_SEQ_3 :
+src/nic/auth.c-114-            if (pwdn_info->auth_algo != ZT_80211_AUTH_ALGO_SHARED_KEY)
+src/nic/auth.c-115-            {
+src/nic/auth.c-116-                AUTH_WARN("auth algorthm error");
+src/nic/auth.c-117-                return -3;
+--
+src/nic/auth.c-219-zt_pt_ret_t zt_auth_ap_thrd(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info)
+src/nic/auth.c-220-{
+src/nic/auth.c-221-    zt_pt_t *pt = &pwdn_info->sub_thrd_pt;
+src/nic/auth.c-222-    sec_info_st *psec_info = pnic_info->sec_info;
+src/nic/auth.c-223-    zt_ap_msg_t *pmsg = NULL;
+src/nic/auth.c-224-    zt_80211_mgmt_t *pmgmt;
+src/nic/auth.c-225-    zt_80211_auth_seq_e frame_seq;
+src/nic/auth.c-226-    zt_u32 frame_algo;
+src/nic/auth.c:227:    zt_80211_mgmt_ie_t *pie;
+src/nic/auth.c-228-
+src/nic/auth.c-229-    PT_BEGIN(pt);
+src/nic/auth.c-230-
+src/nic/auth.c-231-    /* wait auth request frame */
+src/nic/auth.c-232-    PT_WAIT_UNTIL(pt, pmsg = zt_ap_msg_get(&pwdn_info->ap_msg));
+src/nic/auth.c-233-    if (pmsg->tag != ZT_AP_MSG_TAG_AUTH_FRAME)
+src/nic/auth.c-234-    {
+src/nic/auth.c-235-        zt_ap_msg_free(pnic_info, &pwdn_info->ap_msg, pmsg);
+src/nic/auth.c-236-        AUTH_WARN("receive a frame no auth type");
+src/nic/auth.c-237-        zt_deauth_xmit_frame(pnic_info, pwdn_info->mac,
+src/nic/auth.c-238-                             ZT_80211_REASON_DEAUTH_LEAVING);
+src/nic/auth.c-239-        PT_EXIT(pt);
+--
+src/nic/auth.c-619-    /**
+src/nic/auth.c-620-     * below is auth(for shark key type) seq3/4 process
+src/nic/auth.c-621-     */
+src/nic/auth.c-622-
+src/nic/auth.c-623-    /* retrive challenge text from auth seq2 */
+src/nic/auth.c-624-    {
+src/nic/auth.c-625-        zt_u16 var_len = mgmt_len -
+src/nic/auth.c-626-                         ((zt_u8 *)pauth_ie->variable - (zt_u8 *)pmgmt);
+src/nic/auth.c:627:        zt_80211_mgmt_ie_t *pie;
+src/nic/auth.c-628-        if (zt_80211_mgmt_ies_search(pauth_ie->variable, var_len,
+src/nic/auth.c-629-                                     ZT_80211_MGMT_EID_CHALLENGE, &pie) ||
+src/nic/auth.c-630-                pie->len > ZT_ARRAY_SIZE(pwdn_info->chlg_txt))
+src/nic/auth.c-631-        {
+src/nic/auth.c-632-            reason = -5;
+src/nic/auth.c-633-            goto exit;
+src/nic/auth.c-634-        }
+src/nic/auth.c-635-        zt_memcpy(pwdn_info->chlg_txt, pie->data, pie->len);
+src/nic/auth.c-636-    }
+src/nic/auth.c-637-    /* delete auth seq2 */
+src/nic/auth.c-638-    zt_msg_del(pmsg_que, pmsg);
+src/nic/auth.c-639-
+--
+src/nic/mlme.c-218-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/mlme.c-219-    zt_u16 var_len;
+src/nic/mlme.c-220-    zt_u8 bss_ch;
+src/nic/mlme.c-221-
+src/nic/mlme.c-222-    /* get bss channel number */
+src/nic/mlme.c-223-    {
+src/nic/mlme.c-224-        zt_u8 *pies = &pmgmt->probe_resp.variable[0];
+src/nic/mlme.c-225-        zt_u16 ies_len = mgmt_len - ZT_OFFSETOF(struct beacon_ie, variable);
+src/nic/mlme.c:226:        zt_80211_mgmt_ie_t *pie;
+src/nic/mlme.c-227-        if (zt_80211_mgmt_ies_search(pies, ies_len,
+src/nic/mlme.c-228-                                     ZT_80211_MGMT_EID_DS_PARAMS, &pie))
+src/nic/mlme.c-229-        {
+src/nic/mlme.c-230-            MLME_WARN("no DS element field");
+src/nic/mlme.c-231-            return -1;
+src/nic/mlme.c-232-        }
+src/nic/mlme.c-233-        {
+src/nic/mlme.c-234-            zt_80211_mgmt_dsss_parameter_t *pds = (void *)pie->data;
+src/nic/mlme.c-235-            bss_ch = pds->current_channel;
+src/nic/mlme.c-236-        }
+src/nic/mlme.c-237-    }
+src/nic/mlme.c-238-
+--
+src/nic/mlme.c-242-    zt_wlan_set_cur_channel(pnic_info, bss_ch);
+src/nic/mlme.c-243-    /* retrive address */
+src/nic/mlme.c-244-    zt_memcpy(pcur_network->mac_addr, pmgmt->sa, sizeof(zt_80211_addr_t));
+src/nic/mlme.c-245-    zt_wlan_set_cur_bssid(pnic_info, pmgmt->bssid);
+src/nic/mlme.c-246-    /* retrive ssid */
+src/nic/mlme.c-247-    {
+src/nic/mlme.c-248-        zt_u8 *pies = &pmgmt->probe_resp.variable[0];
+src/nic/mlme.c-249-        zt_u16 ies_len = mgmt_len - ZT_OFFSETOF(struct beacon_ie, variable);
+src/nic/mlme.c:250:        zt_80211_mgmt_ie_t *pie;
+src/nic/mlme.c-251-        zt_s32 rst = zt_80211_mgmt_ies_search(pies, ies_len,
+src/nic/mlme.c-252-                                              ZT_80211_MGMT_EID_SSID, &pie);
+src/nic/mlme.c-253-        if (rst)
+src/nic/mlme.c-254-        {
+src/nic/mlme.c-255-            MLME_ERROR("ies search fail, error code: %d", rst);
+src/nic/mlme.c-256-            return -2;
+src/nic/mlme.c-257-        }
+src/nic/mlme.c-258-        {
+src/nic/mlme.c-259-            zt_wlan_ssid_t ssid = {0};
+src/nic/mlme.c-260-            ssid.length = pie->len;
+src/nic/mlme.c-261-            zt_memcpy(ssid.data, pie->data, pie->len);
+src/nic/mlme.c-262-            zt_wlan_set_cur_ssid(pnic_info, &ssid);
+--
+src/nic/scan.c-345-
+src/nic/scan.c-346-    return 0;
+src/nic/scan.c-347-}
+src/nic/scan.c-348-
+src/nic/scan.c-349-zt_inline static
+src/nic/scan.c-350-zt_s32 check_ssid(zt_scan_info_t *pscan_info, zt_u8 *pies, zt_u16 ies_len)
+src/nic/scan.c-351-{
+src/nic/scan.c-352-    zt_u8 i;
+src/nic/scan.c:353:    zt_80211_mgmt_ie_t *pie;
+src/nic/scan.c-354-
+src/nic/scan.c-355-    if (pscan_info->preq->ssid_num)
+src/nic/scan.c-356-    {
+src/nic/scan.c-357-        if (zt_80211_mgmt_ies_search(pies, ies_len, ZT_80211_MGMT_EID_SSID, &pie))
+src/nic/scan.c-358-        {
+src/nic/scan.c-359-            //            SCAN_WARN("no ssid element field");
+src/nic/scan.c-360-            return -1;
+src/nic/scan.c-361-        }
+src/nic/scan.c-362-        for (i = 0; i < pscan_info->preq->ssid_num; i++)
+src/nic/scan.c-363-        {
+src/nic/scan.c-364-            if (pscan_info->preq->ssids[i].length == pie->len ||
+src/nic/scan.c-365-                    !zt_memcmp(pscan_info->preq->ssids[i].data, pie->data, pie->len))
+--
+src/nic/scan.c-374-    }
+src/nic/scan.c-375-
+src/nic/scan.c-376-    return 0;
+src/nic/scan.c-377-}
+src/nic/scan.c-378-
+src/nic/scan.c-379-zt_inline static
+src/nic/scan.c-380-zt_s32 check_channel(zt_scan_info_t *pscan_info, zt_u8 *pies, zt_u16 ies_len)
+src/nic/scan.c-381-{
+src/nic/scan.c:382:    zt_80211_mgmt_ie_t *pie;
+src/nic/scan.c-383-
+src/nic/scan.c-384-    if (zt_80211_mgmt_ies_search(pies, ies_len,
+src/nic/scan.c-385-                                 ZT_80211_MGMT_EID_DS_PARAMS, &pie))
+src/nic/scan.c-386-    {
+src/nic/scan.c-387-        //        SCAN_WARN("no DS element field");
+src/nic/scan.c-388-        return -1;
+src/nic/scan.c-389-    }
+src/nic/scan.c-390-    {
+src/nic/scan.c-391-        zt_80211_mgmt_dsss_parameter_t *pds = (void *)pie->data;
+src/nic/scan.c-392-        zt_u8 ch = pds->current_channel;
+src/nic/scan.c-393-        zt_u8 i;
+src/nic/scan.c-394-        for (i = 0; i < pscan_info->preq->ch_num; i++)
+--
+src/nic/wdn.c-487-    zt_os_api_lock_init(&pwdn_info->psm_lock, ZT_LOCK_TYPE_BH);
+src/nic/wdn.c-488-}
+src/nic/wdn.c-489-#endif
+src/nic/wdn.c-490-
+src/nic/wdn.c-491-zt_s32 zt_wdn_info_sta_update(nic_info_st *nic_info, wdn_net_info_st *wdn_info)
+src/nic/wdn.c-492-{
+src/nic/wdn.c-493-    zt_u8 i;
+src/nic/wdn.c-494-    zt_u8 *pele_start;
+src/nic/wdn.c:495:    zt_80211_mgmt_ie_t *pie;
+src/nic/wdn.c-496-    zt_wlan_mgmt_info_t *wlan_mgmt_info = nic_info->wlan_mgmt_info;
+src/nic/wdn.c-497-    zt_wlan_network_t *cur_network = &wlan_mgmt_info->cur_network;
+src/nic/wdn.c-498-    hw_info_st *hw_info = nic_info->hw_info;
+src/nic/wdn.c-499-
+src/nic/wdn.c-500-    /* init defrag que */
+src/nic/wdn.c-501-    queue_initialize(&wdn_info->defrag_q);
+src/nic/wdn.c-502-
+src/nic/wdn.c-503-    /* set mode */
+src/nic/wdn.c-504-    wdn_info->mode = zt_local_cfg_get_work_mode(nic_info);
+src/nic/wdn.c-505-
+src/nic/wdn.c-506-    /* set ie info */
+src/nic/wdn.c-507-    pele_start = &cur_network->ies[0];
+--
+src/nic/wlan_mgmt.c-155-static zt_inline
+src/nic/wlan_mgmt.c-156-zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.c-157-                                rx_frm_msg_t *pfrm_msg, zt_u16 frm_msg_len,
+src/nic/wlan_mgmt.c-158-                                zt_wlan_mgmt_scan_que_node_t *pscan_que_node)
+src/nic/wlan_mgmt.c-159-{
+src/nic/wlan_mgmt.c-160-    zt_80211_mgmt_t *pmgmt = &pfrm_msg->mgmt_frm;
+src/nic/wlan_mgmt.c-161-    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-162-    zt_u8 *pele_start, *pele_end;
+src/nic/wlan_mgmt.c:163:    zt_80211_mgmt_ie_t *pie;
+src/nic/wlan_mgmt.c-164-    zt_80211_mgmt_dsss_parameter_t *pdsss_para;
+src/nic/wlan_mgmt.c-165-    zt_80211_mgmt_ht_operation_t *pht_oper;
+src/nic/wlan_mgmt.c-166-    zt_u8 support_rate_cnt = 0;
+src/nic/wlan_mgmt.c-167-    zt_80211_mgmt_ht_cap_t *pht_cap;
+src/nic/wlan_mgmt.c-168-    zt_u8 i;
+src/nic/wlan_mgmt.c-169-    zt_bool cck_spot = zt_false, ofdm_spot = zt_false;
+src/nic/wlan_mgmt.c-170-    zt_u8 wpa_oui[4] = {0x0, 0x50, 0xf2, 0x01};
+src/nic/wlan_mgmt.c-171-    zt_u8 wps_oui[4] = {0x0, 0x50, 0xf2, 0x04};
+src/nic/wlan_mgmt.c-172-    zt_80211_frame_e frame_type;
+src/nic/wlan_mgmt.c-173-
+src/nic/wlan_mgmt.c-174-    NODE_INFO_DBG("----------------------------");
+src/nic/wlan_mgmt.c-175-
+--
+src/nic/wlan_mgmt.c-239-    /* mark ssid no initilize */
+src/nic/wlan_mgmt.c-240-    pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_UNKNOWN;
+src/nic/wlan_mgmt.c-241-
+src/nic/wlan_mgmt.c-242-    pele_start = &pmgmt->beacon.variable[0];
+src/nic/wlan_mgmt.c-243-    pele_end = &pele_start[mgmt_len - ZT_OFFSETOF(zt_80211_mgmt_t,
+src/nic/wlan_mgmt.c-244-                                    beacon.variable)];
+src/nic/wlan_mgmt.c-245-    do
+src/nic/wlan_mgmt.c-246-    {
+src/nic/wlan_mgmt.c:247:        pie = (zt_80211_mgmt_ie_t *)pele_start;
+src/nic/wlan_mgmt.c-248-        switch (pie->element_id)
+src/nic/wlan_mgmt.c-249-        {
+src/nic/wlan_mgmt.c-250-            case ZT_80211_MGMT_EID_SSID :
+src/nic/wlan_mgmt.c-251-                if (pie->len >= sizeof(pscan_que_node->ssid.data))
+src/nic/wlan_mgmt.c-252-                {
+src/nic/wlan_mgmt.c-253-                    WLAN_MGMT_WARN("invalid SSID length(%d)", pie->len);
+src/nic/wlan_mgmt.c-254-                    return -3;
+src/nic/wlan_mgmt.c-255-                }
+src/nic/wlan_mgmt.c-256-                if (frame_type == ZT_80211_FRM_PROBE_RESP)
+src/nic/wlan_mgmt.c-257-                {
+src/nic/wlan_mgmt.c-258-                    if (!pie->len)
+src/nic/wlan_mgmt.c-259-                    {
+--
+src/nic/wlan_mgmt.c-342-                                  ZT_80211_MGMT_HT_CAP_SGI_40)));
+src/nic/wlan_mgmt.c-343-                break;
+src/nic/wlan_mgmt.c-344-
+src/nic/wlan_mgmt.c-345-            case ZT_80211_MGMT_EID_VENDOR_SPECIFIC :
+src/nic/wlan_mgmt.c-346-                if (!zt_memcmp(pie->data, wpa_oui, sizeof(wpa_oui)))
+src/nic/wlan_mgmt.c-347-                {
+src/nic/wlan_mgmt.c-348-                    if (pie->len <= sizeof(pscan_que_node->wpa_ie))
+src/nic/wlan_mgmt.c-349-                    {
+src/nic/wlan_mgmt.c:350:                        zt_u32 len = sizeof(zt_80211_mgmt_ie_t) + pie->len;
+src/nic/wlan_mgmt.c-351-
+src/nic/wlan_mgmt.c-352-                        zt_memcpy(&pscan_que_node->wpa_ie, pie, len);
+src/nic/wlan_mgmt.c-353-                        zt_80211_mgmt_wpa_parse(pscan_que_node->wpa_ie, len,
+src/nic/wlan_mgmt.c-354-                                                &pscan_que_node->wpa_multicast_cipher,
+src/nic/wlan_mgmt.c-355-                                                &pscan_que_node->wpa_unicast_cipher);
+src/nic/wlan_mgmt.c-356-                    }
+src/nic/wlan_mgmt.c-357-                    else
+src/nic/wlan_mgmt.c-358-                    {
+src/nic/wlan_mgmt.c-359-                        WLAN_MGMT_WARN("wpa length=%d over limite", pie->len);
+src/nic/wlan_mgmt.c-360-                        return -6;
+src/nic/wlan_mgmt.c-361-                    }
+src/nic/wlan_mgmt.c-362-                }
+src/nic/wlan_mgmt.c-363-                else if (!zt_memcmp(pie->data, wps_oui, sizeof(wps_oui)))
+src/nic/wlan_mgmt.c-364-                {
+src/nic/wlan_mgmt.c-365-                    if (pie->len <= sizeof(pscan_que_node->wps_ie))
+src/nic/wlan_mgmt.c-366-                    {
+src/nic/wlan_mgmt.c-367-                        zt_memcpy(&pscan_que_node->wps_ie, pie,
+src/nic/wlan_mgmt.c:368:                                  ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len);
+src/nic/wlan_mgmt.c-369-                    }
+src/nic/wlan_mgmt.c-370-                    else
+src/nic/wlan_mgmt.c-371-                    {
+src/nic/wlan_mgmt.c-372-                        NODE_INFO_DBG("wps length=%d over limite", pie->len);
+src/nic/wlan_mgmt.c-373-                    }
+src/nic/wlan_mgmt.c-374-                }
+src/nic/wlan_mgmt.c-375-                break;
+src/nic/wlan_mgmt.c-376-
+src/nic/wlan_mgmt.c-377-            case ZT_80211_MGMT_EID_RSN :
+src/nic/wlan_mgmt.c-378-                if (pie->len <= sizeof(pscan_que_node->rsn_ie))
+src/nic/wlan_mgmt.c-379-                {
+src/nic/wlan_mgmt.c:380:                    zt_u32 len = sizeof(zt_80211_mgmt_ie_t) + pie->len;
+src/nic/wlan_mgmt.c-381-
+src/nic/wlan_mgmt.c-382-                    zt_memcpy(&pscan_que_node->rsn_ie, pie, len);
+src/nic/wlan_mgmt.c-383-                    zt_80211_mgmt_rsn_parse(pscan_que_node->rsn_ie, len,
+src/nic/wlan_mgmt.c-384-                                            &pscan_que_node->rsn_group_cipher,
+src/nic/wlan_mgmt.c-385-                                            &pscan_que_node->rsn_pairwise_cipher);
+src/nic/wlan_mgmt.c-386-                }
+src/nic/wlan_mgmt.c-387-                else
+src/nic/wlan_mgmt.c-388-                {
+src/nic/wlan_mgmt.c-389-                    WLAN_MGMT_WARN("rsn length=%d over limite", pie->len);
+src/nic/wlan_mgmt.c-390-                    return -7;
+src/nic/wlan_mgmt.c-391-                }
+src/nic/wlan_mgmt.c-392-                break;
+src/nic/wlan_mgmt.c-393-        }
+src/nic/wlan_mgmt.c-394-        /* get next element point */
+src/nic/wlan_mgmt.c:395:        pele_start = &pele_start[ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len];
+src/nic/wlan_mgmt.c-396-    } while (pele_start < pele_end);
+src/nic/wlan_mgmt.c-397-
+src/nic/wlan_mgmt.c-398-    /* parse validity check */
+src/nic/wlan_mgmt.c-399-    if (pscan_que_node->ssid_type == ZT_80211_HIDDEN_SSID_UNKNOWN)
+src/nic/wlan_mgmt.c-400-    {
+src/nic/wlan_mgmt.c-401-        WLAN_MGMT_WARN("no ssid element"" bssid:"ZT_MAC_FMT,
+src/nic/wlan_mgmt.c-402-                       ZT_MAC_ARG(pscan_que_node->bssid));
+src/nic/wlan_mgmt.c-403-        return -8;
+src/nic/wlan_mgmt.c-404-    }
+src/nic/wlan_mgmt.c-405-    if (!support_rate_cnt)
+src/nic/wlan_mgmt.c-406-    {
+src/nic/wlan_mgmt.c-407-        WLAN_MGMT_WARN("no datarate element");
+--
+src/nic/zt_80211.c-28-static zt_u8 SNAP_ETH_TYPE_APPLETALK_AARP[2] = { 0x80, 0xf3 }; /* AppleTale ARP */
+src/nic/zt_80211.c-29-
+src/nic/zt_80211.c-30-
+src/nic/zt_80211.c-31-static zt_u8 wl_rfc1042_header[] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00 };
+src/nic/zt_80211.c-32-static zt_u8 wl_bridge_tunnel_header[] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0xf8 };
+src/nic/zt_80211.c-33-
+src/nic/zt_80211.c-34-zt_s32 zt_80211_mgmt_ies_search(void *pvar, zt_u16 var_len,
+src/nic/zt_80211.c-35-                                zt_u8 cmp_id,
+src/nic/zt_80211.c:36:                                zt_80211_mgmt_ie_t **pout)
+src/nic/zt_80211.c-37-{
+src/nic/zt_80211.c:38:    zt_80211_mgmt_ie_t *pie = NULL;
+src/nic/zt_80211.c-39-    zt_u8 *pstart = pvar;
+src/nic/zt_80211.c-40-    zt_u16 offset = 0;
+src/nic/zt_80211.c-41-
+src/nic/zt_80211.c-42-    if (pvar == NULL || pout == NULL)
+src/nic/zt_80211.c-43-    {
+src/nic/zt_80211.c-44-        return ZT_RETURN_FAIL;
+src/nic/zt_80211.c-45-    }
+src/nic/zt_80211.c-46-
+src/nic/zt_80211.c-47-    while (1)
+src/nic/zt_80211.c-48-    {
+src/nic/zt_80211.c:49:        pie = (zt_80211_mgmt_ie_t *)(pstart + offset);
+src/nic/zt_80211.c-50-        if (pie->element_id == cmp_id)
+src/nic/zt_80211.c-51-        {
+src/nic/zt_80211.c-52-            *pout = pie;
+src/nic/zt_80211.c-53-            return ZT_RETURN_OK;
+src/nic/zt_80211.c-54-        }
+src/nic/zt_80211.c-55-
+src/nic/zt_80211.c-56-        offset += 2 + pie->len;
+src/nic/zt_80211.c-57-        if (offset >= var_len)
+src/nic/zt_80211.c-58-        {
+src/nic/zt_80211.c-59-            return ZT_RETURN_FAIL;
+src/nic/zt_80211.c-60-        }
+src/nic/zt_80211.c-61-    }
+src/nic/zt_80211.c-62-}
+src/nic/zt_80211.c-63-
+src/nic/zt_80211.c-64-zt_s32 zt_80211_mgmt_ies_search_with_oui(void *pies, zt_u16 ies_len,
+src/nic/zt_80211.c-65-        zt_u8 cmp_id, zt_u8 *oui,
+src/nic/zt_80211.c:66:        zt_80211_mgmt_ie_t **ppie)
+src/nic/zt_80211.c-67-{
+src/nic/zt_80211.c:68:    zt_80211_mgmt_ie_t *pie;
+src/nic/zt_80211.c-69-    zt_u8 *pstart = pies;
+src/nic/zt_80211.c-70-    zt_u16 offset = 0;
+src/nic/zt_80211.c-71-
+src/nic/zt_80211.c-72-    if (pies == NULL || ppie == NULL)
+src/nic/zt_80211.c-73-    {
+src/nic/zt_80211.c-74-        return ZT_RETURN_FAIL;
+src/nic/zt_80211.c-75-    }
+src/nic/zt_80211.c-76-
+src/nic/zt_80211.c-77-    while (1)
+src/nic/zt_80211.c-78-    {
+src/nic/zt_80211.c:79:        pie = (zt_80211_mgmt_ie_t *)(pstart + offset);
+src/nic/zt_80211.c-80-        if (pie->element_id == cmp_id)
+src/nic/zt_80211.c-81-        {
+src/nic/zt_80211.c-82-            if (zt_memcmp(pie->data, oui, 4) == 0)
+src/nic/zt_80211.c-83-            {
+src/nic/zt_80211.c-84-                *ppie = pie;
+src/nic/zt_80211.c-85-                return ZT_RETURN_OK;
+src/nic/zt_80211.c-86-            }
+src/nic/zt_80211.c-87-        }
+src/nic/zt_80211.c-88-
+src/nic/zt_80211.c-89-        offset += 2 + pie->len;
+src/nic/zt_80211.c-90-        if (offset >= ies_len)
+src/nic/zt_80211.c-91-        {
+--
+src/nic/zt_80211.c-147-    }
+src/nic/zt_80211.c-148-
+src/nic/zt_80211.c-149-    return 0;
+src/nic/zt_80211.c-150-}
+src/nic/zt_80211.c-151-
+src/nic/zt_80211.c-152-zt_s32 zt_80211_mgmt_rsn_parse(void *prsn, zt_u16 len,
+src/nic/zt_80211.c-153-                               zt_u32 *pgroup_cipher, zt_u32 *pairwise_cipher)
+src/nic/zt_80211.c-154-{
+src/nic/zt_80211.c:155:    zt_80211_mgmt_ie_t *pie;
+src/nic/zt_80211.c-156-    zt_u16 left;
+src/nic/zt_80211.c-157-    zt_u8 *pos;
+src/nic/zt_80211.c-158-    zt_u16 version;
+src/nic/zt_80211.c-159-    zt_u16 cipher_suite_cnt;
+src/nic/zt_80211.c-160-    zt_s32 ret = 0;
+src/nic/zt_80211.c-161-
+src/nic/zt_80211.c-162-    if (prsn == NULL || len == 0)
+src/nic/zt_80211.c-163-    {
+src/nic/zt_80211.c-164-        _80211_WARN("NULL point");
+src/nic/zt_80211.c-165-        ret = -1;
+src/nic/zt_80211.c-166-        goto exit;
+src/nic/zt_80211.c-167-    }
+src/nic/zt_80211.c-168-
+src/nic/zt_80211.c-169-    pie = prsn;
+src/nic/zt_80211.c-170-    if (!(pie->element_id == ZT_80211_MGMT_EID_RSN &&
+src/nic/zt_80211.c:171:            len >= ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len))
+src/nic/zt_80211.c-172-    {
+src/nic/zt_80211.c-173-        _80211_DBG("no rsn element");
+src/nic/zt_80211.c-174-        ret = -2;
+src/nic/zt_80211.c-175-        goto exit;
+src/nic/zt_80211.c-176-    }
+src/nic/zt_80211.c-177-    pos = pie->data;
+src/nic/zt_80211.c:178:    left = len - ZT_OFFSETOF(zt_80211_mgmt_ie_t, data);
+src/nic/zt_80211.c-179-
+src/nic/zt_80211.c-180-#define RSNE_VERSION_SIZE                       2
+src/nic/zt_80211.c-181-#define RSNE_GROUP_DATA_CIPHER_SUITE_SIZE       4
+src/nic/zt_80211.c-182-#define RSNE_PARIWISE_CIPHER_SUITE_COUNT_SIZE   2
+src/nic/zt_80211.c-183-#define RSNE_PARIWISE_CIPHER_SUITE_LIST_SIZE    4
+src/nic/zt_80211.c-184-
+src/nic/zt_80211.c-185-    /* check version field */
+src/nic/zt_80211.c-186-    if (left < RSNE_VERSION_SIZE)
+src/nic/zt_80211.c-187-    {
+src/nic/zt_80211.c-188-        _80211_WARN("no version field");
+src/nic/zt_80211.c-189-        ret = -3;
+src/nic/zt_80211.c-190-        goto exit;
+--
+src/nic/zt_80211.c-265-}
+src/nic/zt_80211.c-266-
+src/nic/zt_80211.c-267-zt_s32 zt_80211_mgmt_rsn_survey(void *data, zt_u16 data_len,
+src/nic/zt_80211.c-268-                                void **prsn_ie, zt_u16 *prsn_ie_len,
+src/nic/zt_80211.c-269-                                zt_u32 *pgroup_cipher, zt_u32 *pairwise_cipher)
+src/nic/zt_80211.c-270-{
+src/nic/zt_80211.c-271-    zt_s32 ret;
+src/nic/zt_80211.c-272-
+src/nic/zt_80211.c:273:    zt_80211_mgmt_ie_t *pie = data;
+src/nic/zt_80211.c-274-    zt_u16 ie_len = data_len;
+src/nic/zt_80211.c-275-
+src/nic/zt_80211.c-276-    do
+src/nic/zt_80211.c-277-    {
+src/nic/zt_80211.c-278-        ret = zt_80211_mgmt_rsn_parse(pie, sizeof(*pie) + pie->len,
+src/nic/zt_80211.c-279-                                      pgroup_cipher, pairwise_cipher);
+src/nic/zt_80211.c-280-        if (!ret)
+src/nic/zt_80211.c-281-        {
+src/nic/zt_80211.c-282-            if (prsn_ie)
+src/nic/zt_80211.c-283-            {
+src/nic/zt_80211.c-284-                *prsn_ie = pie;
+src/nic/zt_80211.c-285-            }
+--
+src/nic/zt_80211.c-290-            break;
+src/nic/zt_80211.c-291-        }
+src/nic/zt_80211.c-292-
+src/nic/zt_80211.c-293-        ie_len -= sizeof(*pie) + pie->len;
+src/nic/zt_80211.c-294-        if (ie_len <= sizeof(*pie))
+src/nic/zt_80211.c-295-        {
+src/nic/zt_80211.c-296-            break;
+src/nic/zt_80211.c-297-        }
+src/nic/zt_80211.c:298:        pie = (zt_80211_mgmt_ie_t *)&pie->data[pie->len];
+src/nic/zt_80211.c-299-    } while (1);
+src/nic/zt_80211.c-300-
+src/nic/zt_80211.c-301-    return ret;
+src/nic/zt_80211.c-302-}
+src/nic/zt_80211.c-303-
+src/nic/zt_80211.c-304-static zt_inline zt_u32 get_wpa_cipher_suite(zt_u32 cipher_suite)
+src/nic/zt_80211.c-305-{
+src/nic/zt_80211.c-306-    zt_u32 oui;
+src/nic/zt_80211.c-307-    zt_u8 type;
+src/nic/zt_80211.c-308-
+src/nic/zt_80211.c-309-    oui = cipher_suite >> 8;
+src/nic/zt_80211.c-310-    if (oui != ZT_80211_OUI_MICROSOFT)
+--
+src/nic/zt_80211.c-331-}
+src/nic/zt_80211.c-332-
+src/nic/zt_80211.c-333-
+src/nic/zt_80211.c-334-zt_s32 zt_80211_mgmt_wpa_parse(void *pwpa, zt_u16 len,
+src/nic/zt_80211.c-335-                               zt_u32 *pmulticast_cipher, zt_u32 *punicast_cipher)
+src/nic/zt_80211.c-336-{
+src/nic/zt_80211.c-337-    zt_u16 left;
+src/nic/zt_80211.c-338-    zt_u8 *pos;
+src/nic/zt_80211.c:339:    zt_80211_mgmt_ie_t *pie;
+src/nic/zt_80211.c-340-    zt_u32 oui_type;
+src/nic/zt_80211.c-341-    zt_u16 version;
+src/nic/zt_80211.c-342-    zt_u16 cipher_suite_cnt;
+src/nic/zt_80211.c-343-    zt_s32 ret = 0;
+src/nic/zt_80211.c-344-
+src/nic/zt_80211.c-345-    if (pwpa == NULL || len == 0)
+src/nic/zt_80211.c-346-    {
+src/nic/zt_80211.c-347-        _80211_WARN("invalid parameter");
+src/nic/zt_80211.c-348-        ret = -1;
+src/nic/zt_80211.c-349-        goto exit;
+src/nic/zt_80211.c-350-    }
+src/nic/zt_80211.c-351-
+src/nic/zt_80211.c-352-    pie = pwpa;
+src/nic/zt_80211.c-353-    if (!(pie->element_id == ZT_80211_MGMT_EID_VENDOR_SPECIFIC &&
+src/nic/zt_80211.c:354:            len >= ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len))
+src/nic/zt_80211.c-355-    {
+src/nic/zt_80211.c-356-        _80211_DBG("data corrupt");
+src/nic/zt_80211.c-357-        ret = -2;
+src/nic/zt_80211.c-358-        goto exit;
+src/nic/zt_80211.c-359-    }
+src/nic/zt_80211.c-360-    pos = pie->data;
+src/nic/zt_80211.c:361:    left = len - ZT_OFFSETOF(zt_80211_mgmt_ie_t, data);
+src/nic/zt_80211.c-362-
+src/nic/zt_80211.c-363-#define WPA_OUI_TYPE_SIZE                       4
+src/nic/zt_80211.c-364-#define WPA_VERSION_SIZE                        2
+src/nic/zt_80211.c-365-#define WPA_MULTICAST_CIPHER_SUITE_SIZE         4
+src/nic/zt_80211.c-366-#define WPA_UNICAST_CIPHER_SUITE_COUNT_SIZE     2
+src/nic/zt_80211.c-367-#define WPA_UNICAST_CIPHER_SUITE_LIST_SIZE      4
+src/nic/zt_80211.c-368-
+src/nic/zt_80211.c-369-    /* check OUT-type field */
+src/nic/zt_80211.c-370-    if (left < WPA_OUI_TYPE_SIZE)
+src/nic/zt_80211.c-371-    {
+src/nic/zt_80211.c-372-        _80211_WARN("no oui-type field");
+src/nic/zt_80211.c-373-        ret = -3;
+--
+src/nic/zt_80211.c-468-}
+src/nic/zt_80211.c-469-
+src/nic/zt_80211.c-470-zt_s32 zt_80211_mgmt_wpa_survey(void *data, zt_u16 data_len,
+src/nic/zt_80211.c-471-                                void **pwpa_ie, zt_u16 *pwpa_ie_len,
+src/nic/zt_80211.c-472-                                zt_u32 *pmulticast_cipher, zt_u32 *punicast_cipher)
+src/nic/zt_80211.c-473-{
+src/nic/zt_80211.c-474-    zt_s32 ret;
+src/nic/zt_80211.c-475-
+src/nic/zt_80211.c:476:    zt_80211_mgmt_ie_t *pie = data;
+src/nic/zt_80211.c-477-    zt_u16 ie_len = data_len;
+src/nic/zt_80211.c-478-
+src/nic/zt_80211.c-479-    do
+src/nic/zt_80211.c-480-    {
+src/nic/zt_80211.c-481-        ret = zt_80211_mgmt_wpa_parse(pie, sizeof(*pie) + pie->len,
+src/nic/zt_80211.c-482-                                      pmulticast_cipher, punicast_cipher);
+src/nic/zt_80211.c-483-        if (!ret)
+src/nic/zt_80211.c-484-        {
+src/nic/zt_80211.c-485-            if (pwpa_ie)
+src/nic/zt_80211.c-486-            {
+src/nic/zt_80211.c-487-                *pwpa_ie = pie;
+src/nic/zt_80211.c-488-            }
+--
+src/nic/zt_80211.c-493-            break;
+src/nic/zt_80211.c-494-        }
+src/nic/zt_80211.c-495-
+src/nic/zt_80211.c-496-        ie_len -= sizeof(*pie) + pie->len;
+src/nic/zt_80211.c-497-        if (ie_len <= sizeof(*pie))
+src/nic/zt_80211.c-498-        {
+src/nic/zt_80211.c-499-            break;
+src/nic/zt_80211.c-500-        }
+src/nic/zt_80211.c:501:        pie = (zt_80211_mgmt_ie_t *)&pie->data[pie->len];
+src/nic/zt_80211.c-502-    } while (1);
+src/nic/zt_80211.c-503-
+src/nic/zt_80211.c-504-    return ret;
+src/nic/zt_80211.c-505-}
+src/nic/zt_80211.c-506-
+src/nic/zt_80211.c-507-zt_s32 zt_80211_mgmt_wmm_parse(void *pwmm, zt_u16 len)
+src/nic/zt_80211.c-508-{
+src/nic/zt_80211.c-509-    zt_80211_wmm_param_ie_t *pie;
+src/nic/zt_80211.c-510-    zt_u64 oui_type;
+src/nic/zt_80211.c-511-    zt_s32 ret = 0;
+src/nic/zt_80211.c-512-
+src/nic/zt_80211.c-513-    if (pwmm == NULL || len == 0)
+--
+src/nic/zt_80211.h-694-} zt_80211_mesh_actioncode_t;
+src/nic/zt_80211.h-695-
+src/nic/zt_80211.h-696-
+src/nic/zt_80211.h-697-typedef struct
+src/nic/zt_80211.h-698-{
+src/nic/zt_80211.h-699-    zt_u8 element_id;
+src/nic/zt_80211.h-700-    zt_u8 len;
+src/nic/zt_80211.h-701-    zt_u8 data[0];
+src/nic/zt_80211.h:702:} zt_80211_mgmt_ie_t;
+src/nic/zt_80211.h-703-
+src/nic/zt_80211.h-704-/* U-APSD queue for WMM IEs sent by AP */
+src/nic/zt_80211.h-705-#define ZT_80211_MGMT_WMM_IE_AP_QOSINFO_UAPSD       (1<<7)
+src/nic/zt_80211.h-706-#define ZT_80211_MGMT_WMM_IE_AP_QOSINFO_PARAM_SET_CNT_MASK  0x0f
+src/nic/zt_80211.h-707-/* U-APSD queues for WMM IEs sent by STA */
+src/nic/zt_80211.h-708-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_AC_VO      (1<<0)
+src/nic/zt_80211.h-709-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_AC_VI      (1<<1)
+src/nic/zt_80211.h-710-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_AC_BK      (1<<2)
+src/nic/zt_80211.h-711-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_AC_BE      (1<<3)
+src/nic/zt_80211.h-712-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_AC_MASK    0x0f
+src/nic/zt_80211.h-713-/* U-APSD max SP length for WMM IEs sent by STA */
+src/nic/zt_80211.h-714-#define ZT_80211_MGMT_WMM_IE_STA_QOSINFO_SP_ALL     0x00
+--
+src/nic/zt_80211.h-943-zt_u8 *zt_wlan_get_wps_attr(zt_u8 *wps_ie, zt_u32 wps_ielen,
+src/nic/zt_80211.h-944-                            zt_u16 target_attr_id, zt_u8 *buf_attr, zt_u32 *len_attr, zt_u8 flag);
+src/nic/zt_80211.h-945-zt_u8 *zt_wlan_get_wps_attr_content(zt_u8 flag, zt_u8 *wps_ie, zt_u32 wps_ielen,
+src/nic/zt_80211.h-946-                                    zt_u16 target_attr_id, zt_u8 *buf_content, zt_u32 *len_content);
+src/nic/zt_80211.h-947-
+src/nic/zt_80211.h-948-
+src/nic/zt_80211.h-949-
+src/nic/zt_80211.h-950-zt_s32 zt_80211_mgmt_ies_search(void *pies, zt_u16 ies_len, zt_u8 cmp_id,
+src/nic/zt_80211.h:951:                                zt_80211_mgmt_ie_t **ppie);
+src/nic/zt_80211.h-952-
+src/nic/zt_80211.h-953-
+src/nic/zt_80211.h-954-zt_s32 zt_80211_mgmt_ies_search_with_oui(void *pies, zt_u16 ies_len,
+src/nic/zt_80211.h-955-        zt_u8 cmp_id, zt_u8 *oui,
+src/nic/zt_80211.h:956:        zt_80211_mgmt_ie_t **ppie);
+src/nic/zt_80211.h-957-
+src/nic/zt_80211.h-958-
+src/nic/zt_80211.h-959-zt_u8 *zt_80211_set_fixed_ie(zt_u8 *pbuf, zt_u32 len, zt_u8 *source,
+src/nic/zt_80211.h-960-                             zt_u16 *frlen);
+src/nic/zt_80211.h-961-
+src/nic/zt_80211.h-962-zt_bool zt_80211_is_snap_hdr(zt_u8 *phdr);
+src/nic/zt_80211.h-963-zt_s32 zt_80211_mgmt_wpa_parse(void *pwpa, zt_u16 len,
+src/nic/zt_80211.h-964-                               zt_u32 *pmulticast_cipher, zt_u32 *punicast_cipher);
+src/nic/zt_80211.h-965-zt_s32 zt_80211_mgmt_wpa_survey(void *data, zt_u16 data_len,
+src/nic/zt_80211.h-966-                                void **pwpa_ie, zt_u16 *pwpa_ie_len,
+src/nic/zt_80211.h-967-                                zt_u32 *pmulticast_cipher, zt_u32 *punicast_cipher);
+src/nic/zt_80211.h-968-zt_s32 zt_80211_mgmt_rsn_parse(void *prsn, zt_u16 len,
+--
+src/nic/zt_80211.h-1194-        } zt_packed auth;
+src/nic/zt_80211.h-1195-        struct auth_seq3_ie
+src/nic/zt_80211.h-1196-        {
+src/nic/zt_80211.h-1197-            zt_u32 iv;
+src/nic/zt_80211.h-1198-            zt_u16 auth_alg;
+src/nic/zt_80211.h-1199-            zt_u16 auth_transaction;
+src/nic/zt_80211.h-1200-            zt_u16 status_code;
+src/nic/zt_80211.h-1201-            /* possibly followed Challenge text */
+src/nic/zt_80211.h:1202:            zt_u8 variable[ZT_OFFSETOF(zt_80211_mgmt_ie_t,
+src/nic/zt_80211.h-1203-                                       data) + ZT_80211_AUTH_CHALLENGE_LEN];
+src/nic/zt_80211.h-1204-            zt_u32 icv;
+src/nic/zt_80211.h-1205-        } zt_packed auth_seq3;
+src/nic/zt_80211.h-1206-        struct deauth_ie
+src/nic/zt_80211.h-1207-        {
+src/nic/zt_80211.h-1208-            zt_u16 reason_code;
+src/nic/zt_80211.h-1209-        } zt_packed deauth;
+src/nic/zt_80211.h-1210-        /* assoc */
+src/nic/zt_80211.h-1211-        struct disassoc_ie
+src/nic/zt_80211.h-1212-        {
+src/nic/zt_80211.h-1213-            zt_u16 reason_code;
+src/nic/zt_80211.h-1214-        } zt_packed disassoc;
+--
+src/os/linux/iw/iw_func.c-274-                                 char *pstart, char *pstop)
+src/os/linux/iw/iw_func.c-275-{
+src/os/linux/iw/iw_func.c-276-    char *pstart_last = pstart;
+src/os/linux/iw/iw_func.c-277-    struct iw_event *piwe;
+src/os/linux/iw/iw_func.c-278-    zt_u16 max_rate = 0, rate;
+src/os/linux/iw/iw_func.c-279-    zt_u16 i = 0;
+src/os/linux/iw/iw_func.c-280-    zt_u8 ch;
+src/os/linux/iw/iw_func.c-281-    zt_u8 *p;
+src/os/linux/iw/iw_func.c:282:    zt_80211_mgmt_ie_t *pie;
+src/os/linux/iw/iw_func.c-283-    zt_u32 pie_len;
+src/os/linux/iw/iw_func.c-284-    char *buf = NULL;
+src/os/linux/iw/iw_func.c-285-
+src/os/linux/iw/iw_func.c-286-    piwe = zt_vmalloc(sizeof(struct iw_event));
+src/os/linux/iw/iw_func.c-287-    if (piwe == NULL)
+src/os/linux/iw/iw_func.c-288-    {
+src/os/linux/iw/iw_func.c-289-        IW_FUNC_ERROR("\"struct iw_event\" malloc fail !!!");
+src/os/linux/iw/iw_func.c-290-        goto error;
+src/os/linux/iw/iw_func.c-291-    }
+src/os/linux/iw/iw_func.c-292-
+src/os/linux/iw/iw_func.c-293-    /* AP MAC ADDRESS */
+src/os/linux/iw/iw_func.c-294-    piwe->cmd = SIOCGIWAP;
+--
+src/os/linux/iw/iw_func.c-413-    {
+src/os/linux/iw/iw_func.c-414-        IW_FUNC_ERROR("zt_vmalloc fail !!!");
+src/os/linux/iw/iw_func.c-415-        goto error;
+src/os/linux/iw/iw_func.c-416-    }
+src/os/linux/iw/iw_func.c-417-
+src/os/linux/iw/iw_func.c-418-    if (pscan_que_node->cap_privacy)
+src/os/linux/iw/iw_func.c-419-    {
+src/os/linux/iw/iw_func.c-420-        /* parsing WPA/WPA2 */
+src/os/linux/iw/iw_func.c:421:        pie = (zt_80211_mgmt_ie_t *)pscan_que_node->wpa_ie;
+src/os/linux/iw/iw_func.c:422:        pie_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/os/linux/iw/iw_func.c-423-        if (pie->len > 0)
+src/os/linux/iw/iw_func.c-424-        {
+src/os/linux/iw/iw_func.c-425-            zt_memset(buf, '\0', BUF_SIZE);
+src/os/linux/iw/iw_func.c-426-            p = buf;
+src/os/linux/iw/iw_func.c-427-            p += zt_sprintf(p, "wpa_ie=");
+src/os/linux/iw/iw_func.c-428-            for (i = 0; i < pie_len; i++)
+src/os/linux/iw/iw_func.c-429-            {
+src/os/linux/iw/iw_func.c-430-                p += zt_sprintf(p, "%02x", ((zt_u8 *)pie)[i]);
+src/os/linux/iw/iw_func.c-431-            }
+src/os/linux/iw/iw_func.c-432-
+src/os/linux/iw/iw_func.c-433-            zt_memset(piwe, 0, sizeof(struct iw_event));
+src/os/linux/iw/iw_func.c-434-            piwe->cmd = IWEVCUSTOM;
+--
+src/os/linux/iw/iw_func.c-438-            zt_memset(piwe, 0, sizeof(struct iw_event));
+src/os/linux/iw/iw_func.c-439-            piwe->cmd = IWEVGENIE;
+src/os/linux/iw/iw_func.c-440-            piwe->u.data.length = pie_len;
+src/os/linux/iw/iw_func.c-441-            pstart =
+src/os/linux/iw/iw_func.c-442-                iwe_stream_add_point(pinfo, pstart, pstop, piwe, (char *)pie);
+src/os/linux/iw/iw_func.c-443-        }
+src/os/linux/iw/iw_func.c-444-
+src/os/linux/iw/iw_func.c-445-        /* parsing rsn */
+src/os/linux/iw/iw_func.c:446:        pie = (zt_80211_mgmt_ie_t *)pscan_que_node->rsn_ie;
+src/os/linux/iw/iw_func.c:447:        pie_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/os/linux/iw/iw_func.c-448-        if (pie->len > 0)
+src/os/linux/iw/iw_func.c-449-        {
+src/os/linux/iw/iw_func.c-450-            zt_memset(buf, '\0', BUF_SIZE);
+src/os/linux/iw/iw_func.c-451-            p = buf;
+src/os/linux/iw/iw_func.c-452-            p += zt_sprintf(p, "rsn_ie=");
+src/os/linux/iw/iw_func.c-453-            for (i = 0; i < pie_len; i++)
+src/os/linux/iw/iw_func.c-454-            {
+src/os/linux/iw/iw_func.c-455-                p += zt_sprintf(p, "%02x", ((zt_u8 *)pie)[i]);
+src/os/linux/iw/iw_func.c-456-            }
+src/os/linux/iw/iw_func.c-457-
+src/os/linux/iw/iw_func.c-458-            zt_memset(piwe, 0, sizeof(struct iw_event));
+src/os/linux/iw/iw_func.c-459-            piwe->cmd = IWEVCUSTOM;
+--
+src/os/linux/iw/iw_func.c-463-            zt_memset(piwe, 0, sizeof(struct iw_event));
+src/os/linux/iw/iw_func.c-464-            piwe->cmd = IWEVGENIE;
+src/os/linux/iw/iw_func.c-465-            piwe->u.data.length = pie_len;
+src/os/linux/iw/iw_func.c-466-            pstart =
+src/os/linux/iw/iw_func.c-467-                iwe_stream_add_point(pinfo, pstart, pstop, piwe, (char *)pie);
+src/os/linux/iw/iw_func.c-468-        }
+src/os/linux/iw/iw_func.c-469-
+src/os/linux/iw/iw_func.c-470-        /* parsing WPS */
+src/os/linux/iw/iw_func.c:471:        pie = (zt_80211_mgmt_ie_t *)pscan_que_node->wps_ie;
+src/os/linux/iw/iw_func.c:472:        pie_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len;
+src/os/linux/iw/iw_func.c-473-        if (pie->len)
+src/os/linux/iw/iw_func.c-474-        {
+src/os/linux/iw/iw_func.c-475-            piwe->cmd = IWEVGENIE;
+src/os/linux/iw/iw_func.c-476-            piwe->u.data.length = pie_len;
+src/os/linux/iw/iw_func.c-477-            pstart =
+src/os/linux/iw/iw_func.c-478-                iwe_stream_add_point(pinfo, pstart, pstop, piwe, (char *)pie);
+src/os/linux/iw/iw_func.c-479-        }
+src/os/linux/iw/iw_func.c-480-    }
+src/os/linux/iw/iw_func.c-481-
+src/os/linux/iw/iw_func.c-482-    /* Add rssi statistics */
+src/os/linux/iw/iw_func.c-483-    zt_memset(buf, '\0', BUF_SIZE);
+src/os/linux/iw/iw_func.c-484-    p = buf;
+--
+src/os/linux/iw/iw_func.c-1282-        IW_FUNC_DBG("<ap count = %d / scaned_list count=%d>", apCount,
+src/os/linux/iw/iw_func.c-1283-                    zt_que_count(&((zt_wlan_mgmt_info_t *)
+src/os/linux/iw/iw_func.c-1284-                                   pnic_info->wlan_mgmt_info)->scan_que.ready));
+src/os/linux/iw/iw_func.c-1285-    }
+src/os/linux/iw/iw_func.c-1286-
+src/os/linux/iw/iw_func.c-1287-    return res;
+src/os/linux/iw/iw_func.c-1288-}
+src/os/linux/iw/iw_func.c-1289-
+src/os/linux/iw/iw_func.c:1290:static zt_bool is_8021x_auth(zt_80211_mgmt_ie_t *pies, zt_u16 ies_len)
+src/os/linux/iw/iw_func.c-1291-{
+src/os/linux/iw/iw_func.c:1292:    zt_80211_mgmt_ie_t *pie;
+src/os/linux/iw/iw_func.c-1293-    zt_u16 offset_len = 0;
+src/os/linux/iw/iw_func.c-1294-    zt_u32 pmulticast_cipher, punicast_cipher;
+src/os/linux/iw/iw_func.c-1295-
+src/os/linux/iw/iw_func.c-1296-    pie = pies;
+src/os/linux/iw/iw_func.c-1297-
+src/os/linux/iw/iw_func.c-1298-    while (offset_len < ies_len)
+src/os/linux/iw/iw_func.c-1299-    {
+src/os/linux/iw/iw_func.c-1300-        switch (pie->element_id)
+src/os/linux/iw/iw_func.c-1301-        {
+src/os/linux/iw/iw_func.c-1302-            case ZT_80211_MGMT_EID_RSN:
+src/os/linux/iw/iw_func.c-1303-                IW_FUNC_DBG("RSN");
+src/os/linux/iw/iw_func.c-1304-                return zt_true;
+src/os/linux/iw/iw_func.c-1305-            case ZT_80211_MGMT_EID_VENDOR_SPECIFIC:
+src/os/linux/iw/iw_func.c-1306-                if (!zt_80211_mgmt_wpa_survey(pie,
+src/os/linux/iw/iw_func.c:1307:                                              ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len,
+src/os/linux/iw/iw_func.c-1308-                                              NULL, NULL,
+src/os/linux/iw/iw_func.c-1309-                                              &pmulticast_cipher,
+src/os/linux/iw/iw_func.c-1310-                                              &punicast_cipher))
+src/os/linux/iw/iw_func.c-1311-                {
+src/os/linux/iw/iw_func.c-1312-                    IW_FUNC_INFO("WPA");
+src/os/linux/iw/iw_func.c-1313-                    return zt_true;
+src/os/linux/iw/iw_func.c-1314-                }
+src/os/linux/iw/iw_func.c-1315-                break;
+src/os/linux/iw/iw_func.c-1316-            default:
+src/os/linux/iw/iw_func.c-1317-                break;
+src/os/linux/iw/iw_func.c-1318-        }
+src/os/linux/iw/iw_func.c-1319-
+src/os/linux/iw/iw_func.c:1320:        offset_len += pie->len + ZT_OFFSETOF(zt_80211_mgmt_ie_t, data);
+src/os/linux/iw/iw_func.c:1321:        pie = (zt_80211_mgmt_ie_t *)(pie->data + pie->len);
+src/os/linux/iw/iw_func.c-1322-    }
+src/os/linux/iw/iw_func.c-1323-
+src/os/linux/iw/iw_func.c-1324-    IW_FUNC_INFO("NO 8021X");
+src/os/linux/iw/iw_func.c-1325-    return zt_false;
+src/os/linux/iw/iw_func.c-1326-}
+src/os/linux/iw/iw_func.c-1327-
+src/os/linux/iw/iw_func.c-1328-zt_s32 zt_iw_setEssid(struct net_device *ndev, struct iw_request_info *info,
+src/os/linux/iw/iw_func.c-1329-                      union iwreq_data *wrqu, char *extra)
+src/os/linux/iw/iw_func.c-1330-{
+src/os/linux/iw/iw_func.c-1331-    ndev_priv_st *pndev_priv = netdev_priv(ndev);
+src/os/linux/iw/iw_func.c-1332-    nic_info_st *pnic_info = pndev_priv->nic;
+src/os/linux/iw/iw_func.c-1333-    sec_info_st *psec_info = pnic_info->sec_info;
+--
+src/os/linux/iw/iw_func.c-1420-            }
+src/os/linux/iw/iw_func.c-1421-
+src/os/linux/iw/iw_func.c-1422-            if (psec_info->dot11PrivacyAlgrthm == _NO_PRIVACY_)
+src/os/linux/iw/iw_func.c-1423-            {
+src/os/linux/iw/iw_func.c-1424-                zt_memset(pnic_info->sec_info, 0x0, sizeof(sec_info_st));
+src/os/linux/iw/iw_func.c-1425-            }
+src/os/linux/iw/iw_func.c-1426-            else if (scan_que_for_rst == ZT_WLAN_MGMT_SCAN_QUE_FOR_RST_BREAK)
+src/os/linux/iw/iw_func.c-1427-            {
+src/os/linux/iw/iw_func.c:1428:                zt_80211_mgmt_ie_t *pies =
+src/os/linux/iw/iw_func.c-1429-                    (void *)((struct beacon_ie *)pscan_que_node->ies)->variable;
+src/os/linux/iw/iw_func.c-1430-                zt_u16 ies_len = pscan_que_node->ie_len -
+src/os/linux/iw/iw_func.c-1431-                                 ZT_OFFSETOF(struct beacon_ie, variable);
+src/os/linux/iw/iw_func.c-1432-                if (!is_8021x_auth(pies, ies_len) &&
+src/os/linux/iw/iw_func.c-1433-                        psec_info->dot11AuthAlgrthm == dot11AuthAlgrthm_8021X)
+src/os/linux/iw/iw_func.c-1434-                {
+src/os/linux/iw/iw_func.c-1435-                    IW_FUNC_DBG("clean sec info!!!");
+src/os/linux/iw/iw_func.c-1436-                    zt_memset(pnic_info->sec_info, 0x0, sizeof(sec_info_st));
+src/os/linux/iw/iw_func.c-1437-                }
+src/os/linux/iw/iw_func.c-1438-            }
+src/os/linux/iw/iw_func.c-1439-
+src/os/linux/iw/iw_func.c-1440-            /* start connection */
+===== MEMORY COPY IMPLEMENTATION =====
+fatal: command line, '#define zt_memcpy|zt_memcpy\\(': Unmatched ( or \(
+pythango_dev@V0id:/tmp/zt9101-linux-driver-publish$ 

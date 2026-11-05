@@ -126,7 +126,7 @@ static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
     if (zt_tx_info_term(pnic_info) < 0)
     {
         LOG_E("===>zt_tx_info_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 
@@ -134,13 +134,14 @@ static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
     if (zt_hw_info_term(pnic_info) < 0)
     {
         LOG_E("===>zt_hw_info_term error");
+        ret = ZT_RETURN_FAIL;
     }
 
     /* local configure term */
     if (zt_local_cfg_term(pnic_info) < 0)
     {
         LOG_E("===>zt_local_cfg_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     pnic_info->ndev_num--;
@@ -302,7 +303,7 @@ init_fail:
 #endif
     if (hardware_ready) prv_hardware_term(pnic_info);
     pnic_info->is_init_commplete = zt_false;
-    return ZT_RETURN_FAIL;
+    ret = ZT_RETURN_FAIL;
 }
 
 
@@ -458,14 +459,14 @@ zt_s32 nic_suspend(nic_info_st *pnic_info)
     if (zt_mlme_suspend(pnic_info))
     {
         LOG_E("mlme suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 #ifdef CFG_ENABLE_AP_MODE
     if (zt_ap_suspend(pnic_info))
     {
         LOG_E("ap suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
@@ -473,20 +474,20 @@ zt_s32 nic_suspend(nic_info_st *pnic_info)
     if (zt_p2p_suspend(pnic_info))
     {
         LOG_E("p2p suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
     if (zt_tx_suspend(pnic_info))
     {
         LOG_E("tx suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     if (zt_rx_suspend(pnic_info))
     {
         LOG_E("rx suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     LOG_D("[NIC] nic_suspend - end");
@@ -504,34 +505,34 @@ zt_s32 nic_resume(nic_info_st *pnic_info)
         if (zt_hw_info_set_default_cfg(pnic_info) < 0)
         {
             LOG_E("===>zt_hw_info_set_default_cfg error");
-            return ZT_RETURN_FAIL;
+            ret = ZT_RETURN_FAIL;
         }
 
         /* configure */
         if (zt_local_cfg_set_default(pnic_info) < 0)
         {
             LOG_E("===>zt_local_cfg_set_default error");
-            return ZT_RETURN_FAIL;
+            ret = ZT_RETURN_FAIL;
         }
     }
 
     if (zt_rx_resume(pnic_info))
     {
         LOG_E("rx suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     if (zt_tx_resume(pnic_info))
     {
         LOG_E("tx suspend error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 #ifdef ZT_CONFIG_P2P
     if (zt_p2p_resume(pnic_info))
     {
         LOG_E("p2p resume error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
@@ -539,14 +540,14 @@ zt_s32 nic_resume(nic_info_st *pnic_info)
     if (zt_ap_resume(pnic_info))
     {
         LOG_E("ap resume error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
     if (zt_mlme_resume(pnic_info))
     {
         LOG_E("mlme resume error!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     LOG_D("[NIC] nic_resume - end");

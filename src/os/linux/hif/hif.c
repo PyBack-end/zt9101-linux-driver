@@ -443,6 +443,10 @@ static zt_s32 __init hif_init(void)
     zt_file *file = NULL;
 #endif
     zt_s32 ret = 0;
+    zt_bool lock_initialized = zt_false;
+    zt_bool notifier_registered = zt_false;
+    zt_bool usb_registered = zt_false;
+    zt_bool sdio_registered = zt_false;
     LOG_D("\n\n     <ZTOP WIFI DRV INSMOD> \n\n");
     LOG_D("************HIF INIT*************");
 #ifdef COMPILE_TIME
@@ -495,7 +499,7 @@ static zt_s32 __init hif_init(void)
         gl_hif->fw1_path = zt_kzalloc(513);
         gl_hif->ifname = zt_kzalloc(64);
         gl_hif->if2name = zt_kzalloc(64);
-        if (!gl_hif->fw_path || !gl_hif->fw1_path || !gl_hif->ifname || !gl_hif->ifname)
+        if (!gl_hif->fw_path || !gl_hif->fw1_path || !gl_hif->ifname || !gl_hif->if2name)
         {
             LOG_E("zt_kzalloc failed");
             goto exit;
@@ -519,7 +523,7 @@ static zt_s32 __init hif_init(void)
         gl_hif->fw1_path = zt_kzalloc(513);
         gl_hif->ifname = zt_kzalloc(64);
         gl_hif->if2name = zt_kzalloc(64);
-        if (!gl_hif->fw_path || !gl_hif->ifname || !gl_hif->ifname)
+        if (!gl_hif->fw_path || !gl_hif->fw1_path || !gl_hif->ifname || !gl_hif->if2name)
         {
             LOG_E("zt_kzalloc failed");
             goto exit;
@@ -534,41 +538,62 @@ static zt_s32 __init hif_init(void)
     gl_hif->hif_num     = 0;
 
     zt_os_api_lock_init(hm_get_lock(), ZT_LOCK_TYPE_MUTEX);
+    lock_initialized = zt_true;
 
     gl_mode_removed = zt_false;
 
     ndev_notifier_register();
+    notifier_registered = zt_true;
 #if defined(CONFIG_USB_FLAG)
     ret = usb_init();
     if (ret)
     {
-        ndev_notifier_unregister();
-        return ret;
+        goto init_fail;
     }
+    usb_registered = zt_true;
 #elif defined(CONFIG_SDIO_FLAG)
     ret = sdio_init();
     if (ret)
     {
-        ndev_notifier_unregister();
-        return ret;
+        goto init_fail;
     }
+    sdio_registered = zt_true;
 #else
     ret = usb_init();
     if (ret)
     {
-        ndev_notifier_unregister();
-        return ret;
+        goto init_fail;
     }
+    usb_registered = zt_true;
 
     ret = sdio_init();
     if (ret)
     {
-        ndev_notifier_unregister();
-        return ret;
+        goto init_fail;
     }
+    sdio_registered = zt_true;
 #endif
 
     return 0;
+
+init_fail:
+    gl_mode_removed = zt_true;
+    if (sdio_registered)
+    {
+        sdio_exit();
+    }
+    if (usb_registered)
+    {
+        usb_exit();
+    }
+    if (notifier_registered)
+    {
+        ndev_notifier_unregister();
+    }
+    if (lock_initialized)
+    {
+        zt_os_api_lock_term(hm_get_lock());
+    }
 
 exit :
     if (gl_hif->fw_path)
@@ -595,8 +620,17 @@ exit :
     {
         zt_kfree(gl_hif->fw_full_path[1]);
     }
+#ifdef CONFIG_FW_FILE
+    if (gl_hif->cfg_content)
+    {
+        zt_kfree(gl_hif->cfg_content);
+        gl_hif->cfg_content = NULL;
+    }
+#endif
     zt_kfree(gl_hif);
-    return -1;
+    gl_hif = NULL;
+    gl_mode_removed = zt_true;
+    return ret ? ret : -1;
 }
 
 static void __exit hif_exit(void)
@@ -1103,9 +1137,11 @@ void hif_node_unregister(hif_node_st *pnode)
     zt_os_api_lock_lock(hm_get_lock());
     zt_list_for_each_safe(tmp, next, hm_get_list_head())
     {
-        node = zt_list_entry(tmp, hif_node_st, next);
-        if (NULL != node  && pnode == node)
+        hif_node_st *candidate = zt_list_entry(tmp, hif_node_st, next);
+
+        if (candidate == pnode)
         {
+            node = candidate;
             zt_list_delete(&node->next);
             hm_set_num(HM_SUB);
             if (HIF_USB == node->hif_type)
@@ -1120,7 +1156,7 @@ void hif_node_unregister(hif_node_st *pnode)
         }
     }
 
-    if (NULL != node)
+    if (node)
     {
         ret = hm_del_id(node->node_id);
         if (ret)

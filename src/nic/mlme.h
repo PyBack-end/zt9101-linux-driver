@@ -73,6 +73,7 @@ typedef enum
     MLME_STA_ADD_BA_RESP,
     MLME_STA_ADD_BA_REQ,
     MLME_STA_IBSS_CONN_SCAN,
+    MLME_STA_KEEPALIVE_SCAN,
 
     MLME_STATE_INIT     = MLME_STA_INIT_BIT,
     MLME_STATE_FREEZE   = MLME_STA_INIT_BIT | MLME_STA_FREEZE,
@@ -90,9 +91,20 @@ typedef enum
     MLME_STATE_ADD_BA_REQ       = MLME_STA_RUN_BIT | MLME_STA_ADD_BA_REQ,
     /* ibss */
     MLME_STATE_IBSS_CONN_SCAN   = MLME_STA_RUN_BIT | MLME_STA_IBSS_CONN_SCAN,
+    MLME_STATE_KEEPALIVE_SCAN   = MLME_STA_RUN_BIT | MLME_STA_KEEPALIVE_SCAN,
 
     MLME_STATE_TERM = MLME_STA_TERM_BIT,
 } mlme_state_e;
+
+typedef enum
+{
+    ZT_KEEPALIVE_PROBE_IDLE = 0,
+    ZT_KEEPALIVE_PROBE_PENDING,
+    ZT_KEEPALIVE_PROBE_RESPONDED,
+    ZT_KEEPALIVE_PROBE_TIMEOUT,
+    ZT_KEEPALIVE_PROBE_ABORTED,
+    ZT_KEEPALIVE_PROBE_FAILED,
+} zt_keepalive_probe_result_e;
 
 typedef struct
 {
@@ -128,6 +140,7 @@ typedef struct
     zt_msg_que_t msg_que;
     zt_timer_t traffic_timer;
     zt_timer_t keep_alive_timer;
+    zt_keepalive_probe_result_e keepalive_probe_result;
     wdn_net_info_st *pwdn_info;
     zt_u8 try_cnt;
 

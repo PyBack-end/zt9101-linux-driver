@@ -845,13 +845,9 @@ zt_s32 zt_data_queue_mngt_term(void *hif_node)
         tasklet_kill(&trxq->recv_task);
     }
 #if HIF_QUEUE_TX_WORKQUEUE_USE
-    if (trxq->tx_wq.ops)
+    if (trxq->tx_wq.ops && trxq->tx_wq.ops->workqueue_term)
     {
-        if (trxq->tx_wq.ops->workqueue_term)
-        {
-            trxq->tx_wq.ops->workqueue_term(&trxq->tx_wq);
-        }
-    }
+        trxq->tx_wq.ops->workqueue_term(&trxq->tx_wq);
     }
 #else
     if (trxq && trxq->is_init)

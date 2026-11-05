@@ -1154,7 +1154,7 @@ static zt_s32 _cfg80211_change_iface(struct wiphy *wiphy,
     mlme_info_t *pmlme_info = pnic_info->mlme_info;
     enum nl80211_iftype old_type;
     sys_work_mode_e network_type = ZT_INFRA_MODE;
-    zt_u8 change;
+    zt_u8 change = zt_false;
     p2p_info_st *p2p_info   = pnic_info->p2p;
 
 #ifdef CFG_ENABLE_ADHOC_MODE

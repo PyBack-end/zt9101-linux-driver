@@ -115,18 +115,47 @@ struct iw_crypt
     zt_u8 set_tx;
     zt_u8 idx;
     zt_u16 key_len;
-    zt_u8 key[0];
+    zt_u8 key[];
 } ;
+
+static zt_bool iw_key_len_valid(zt_u16 alg, zt_u16 key_len)
+{
+    switch (alg)
+    {
+        case IW_ENCODE_ALG_WEP:
+            return key_len == 5 || key_len == 13;
+        case IW_ENCODE_ALG_TKIP:
+            return key_len == 32;
+        case IW_ENCODE_ALG_CCMP:
+            return key_len == 16;
+        case IW_ENCODE_ALG_NONE:
+            return key_len == 0;
+        default:
+            return zt_false;
+    }
+}
 
 static zt_s32 set_encryption(struct net_device *dev,
                              struct iw_crypt *param, zt_u32 param_len)
 {
     zt_u32 wep_key_idx, wep_key_len;
-    ndev_priv_st *pndev_priv = netdev_priv(dev);
-    nic_info_st *pnic_info = pndev_priv->nic;
-    sec_info_st *psec_info = pnic_info->sec_info;
+    ndev_priv_st *pndev_priv;
+    nic_info_st *pnic_info;
+    sec_info_st *psec_info;
     wdn_net_info_st *pwdn_info;
     zt_s32 res = 0;
+
+    if (dev == NULL || param == NULL)
+    {
+        return -EINVAL;
+    }
+    pndev_priv = netdev_priv(dev);
+    if (pndev_priv == NULL || pndev_priv->nic == NULL)
+    {
+        return -EINVAL;
+    }
+    pnic_info = pndev_priv->nic;
+    psec_info = pnic_info->sec_info;
 
     IW_FUNC_DBG("mac addr : "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
 
@@ -136,10 +165,10 @@ static zt_s32 set_encryption(struct net_device *dev,
         return -EINVAL;
     }
 
-    if (param_len !=
-            ZT_OFFSETOF(struct iw_crypt, key) + param->key_len)
+    if (param_len != ZT_OFFSETOF(struct iw_crypt, key) + param->key_len ||
+            !iw_key_len_valid(param->alg, param->key_len))
     {
-        IW_FUNC_ERROR("param_len invalid !!!!!!!");
+        IW_FUNC_ERROR("invalid key parameters");
         res = -EINVAL;
         goto exit;
     }
@@ -163,7 +192,7 @@ static zt_s32 set_encryption(struct net_device *dev,
         wep_key_idx = param->idx;
         wep_key_len = param->key_len;
 
-        if ((wep_key_idx > ZT_80211_WEP_KEYS) || (wep_key_len == 0))
+        if ((wep_key_idx >= ZT_80211_WEP_KEYS) || (wep_key_len == 0))
         {
             res = -EINVAL;
             goto exit;
@@ -225,21 +254,25 @@ static zt_s32 set_encryption(struct net_device *dev,
                 zt_memcpy(pwdn_info->dot118021x_UncstKey.skey, param->key,
                           min_t(zt_u16, param->key_len, 16));
 
-                if (param->alg == IW_ENCODE_ALG_TKIP) /* set mic key */
+                if (param->alg == IW_ENCODE_ALG_TKIP)
                 {
-                    /* KEK PTK128~255 */
                     zt_memcpy(pwdn_info->dot11tkiptxmickey.skey,
-                              &(param->key[16]), 8); /* PTK128~191 */
+                              &param->key[16], 8);
                     zt_memcpy(pwdn_info->dot11tkiprxmickey.skey,
-                              &(param->key[24]), 8); /* PTK192~255 */
+                              &param->key[24], 8);
                     psec_info->busetkipkey = zt_true;
                 }
-                if (param->alg == IW_ENCODE_ALG_CCMP)
+                else if (param->alg == IW_ENCODE_ALG_CCMP)
                 {
                     IW_FUNC_DBG("sta_hw_set_unicast_key");
                     zt_sec_sta_set_unicast_key(pnic_info, &pwdn_info->unicast_cam_id,
                                                pwdn_info->dot118021XPrivacy,
                                                pwdn_info->mac, pwdn_info->dot118021x_UncstKey.skey);
+                }
+                else if (param->alg != IW_ENCODE_ALG_NONE)
+                {
+                    res = -EINVAL;
+                    goto exit;
                 }
             }
             else /* group key */
@@ -248,10 +281,20 @@ static zt_s32 set_encryption(struct net_device *dev,
                 zt_memcpy(psec_info->dot118021XGrpKey[param->idx].skey,
                           param->key,
                           min_t(zt_u16, param->key_len, 16));
-                zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
-                          &param->key[16], 8);
-                zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
-                          &param->key[24], 8);
+                if (param->alg == IW_ENCODE_ALG_TKIP)
+                {
+                    zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
+                              &param->key[16], 8);
+                    zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
+                              &param->key[24], 8);
+                    psec_info->busetkipkey = zt_true;
+                }
+                else if (param->alg != IW_ENCODE_ALG_CCMP &&
+                         param->alg != IW_ENCODE_ALG_NONE)
+                {
+                    res = -EINVAL;
+                    goto exit;
+                }
                 psec_info->binstallGrpkey = zt_true;
                 psec_info->dot118021XGrpKeyid = param->idx;
                 if (psec_info->dot118021XGrpPrivacy == _AES_)
@@ -2283,9 +2326,21 @@ zt_s32 zt_iw_setEncExt(struct net_device *ndev,
 {
     zt_u32 param_len;
     struct iw_crypt *param = NULL;
-    struct iw_point *pencoding = &wrqu->encoding;
-    struct iw_encode_ext *pext = (struct iw_encode_ext *)extra;
+    struct iw_point *pencoding;
+    struct iw_encode_ext *pext;
     zt_s32 res = 0;
+
+    if (ndev == NULL || wrqu == NULL || extra == NULL)
+    {
+        return -EINVAL;
+    }
+    pencoding = &wrqu->encoding;
+    pext = (struct iw_encode_ext *)extra;
+    if (!iw_key_len_valid(pext->alg, pext->key_len))
+    {
+        IW_FUNC_WARN("invalid key cipher or length");
+        return -EINVAL;
+    }
 
     IW_FUNC_DBG("mac addr : "ZT_MAC_FMT,
                 ZT_MAC_ARG(nic_to_local_addr(((ndev_priv_st *)netdev_priv(ndev))->nic)));

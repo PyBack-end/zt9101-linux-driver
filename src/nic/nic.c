@@ -302,14 +302,14 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     if (zt_mlme_term(pnic_info) < 0)
     {
         LOG_E("===>zt_mlme_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 #ifdef CFG_ENABLE_AP_MODE
     if (zt_ap_term(pnic_info) < 0)
     {
         LOG_E("===>zt_ap_work_stop error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
@@ -317,28 +317,28 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     if (zt_wlan_mgmt_term(pnic_info) < 0)
     {
         LOG_E("===>zt_wlan_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* pwr_info term  */
     if (zt_lps_term(pnic_info) < 0)
     {
         LOG_E("===>zt_lps_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* sec term */
     if (zt_sec_info_term(pnic_info) < 0)
     {
         LOG_E("===>zt_sec_info_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* assoc term */
     if (zt_assoc_term(pnic_info) < 0)
     {
         LOG_E("===>zt_assoc_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 
@@ -346,28 +346,28 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     if (zt_auth_term(pnic_info) < 0)
     {
         LOG_E("===>zt_auth_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* scan term */
     if (zt_scan_term(pnic_info) < 0)
     {
         LOG_E("===>zt_scan_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /*wdn term*/
     if (zt_wdn_term(pnic_info) < 0)
     {
         LOG_E("===>zt_wdn_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
 #ifdef CFG_ENABLE_ADHOC_MODE
     if (zt_adhoc_term(pnic_info) < 0)
     {
         LOG_E("===>zt_adhoc_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
@@ -375,7 +375,7 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     if (zt_p2p_term(pnic_info) < 0)
     {
         LOG_E("===>zt_p2p_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 #endif
 
@@ -385,7 +385,7 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     if (prv_hardware_term(pnic_info) < 0)
     {
         LOG_E("prv_hardware_term, fail!");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     LOG_D("[NIC] nic_term - end");

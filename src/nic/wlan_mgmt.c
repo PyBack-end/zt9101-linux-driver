@@ -1413,12 +1413,20 @@ zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
 
 zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
 {
-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+    zt_wlan_mgmt_info_t *pwlan_mgmt_info;
+    zt_msg_que_t *pmsg_que;
     zt_msg_t *pmsg;
     zt_s32 rst;
 
-    /* new message entity */
+    if (pnic_info == NULL || pnic_info->wlan_mgmt_info == NULL)
+    {
+        WLAN_MGMT_ERROR("null point");
+        return -1;
+    }
+
+    pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+    pmsg_que = &pwlan_mgmt_info->msg_que;
+
     rst = zt_msg_new(pmsg_que, tag, &pmsg);
     if (rst)
     {
@@ -1426,26 +1434,26 @@ zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
         return -1;
     }
 
-    /* new message entity */
     rst = zt_msg_push(pmsg_que, pmsg);
     if (rst)
     {
+        zt_msg_del(pmsg_que, pmsg);
         WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
         return -2;
     }
 
     return 0;
 }
-
 zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
                                      zt_u8 *pch, zt_u8 ch_num)
 {
-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+    zt_wlan_mgmt_info_t *pwlan_mgmt_info;
+    zt_msg_que_t *pmsg_que;
     zt_msg_t *pmsg;
     zt_s32 rst;
+    scan_que_refresh_msg_t *ptr;
 
-    if (pnic_info == NULL || pch == NULL)
+    if (pnic_info == NULL || pnic_info->wlan_mgmt_info == NULL || pch == NULL)
     {
         WLAN_MGMT_ERROR("null point");
         return -1;
@@ -1457,7 +1465,8 @@ zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
         return -2;
     }
 
-    /* new message entity */
+    pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+    pmsg_que = &pwlan_mgmt_info->msg_que;
     rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH, &pmsg);
     if (rst)
     {
@@ -1465,43 +1474,44 @@ zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
         return -3;
     }
 
-    /* load value */
     if (sizeof(scan_que_refresh_msg_t) > pmsg->alloc_value_size)
     {
-        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+        zt_msg_del(pmsg_que, pmsg);
+        WLAN_MGMT_ERROR("scan refresh message exceeds allocated capacity");
         return -4;
     }
-    {
-        scan_que_refresh_msg_t *ptr = (void *)pmsg->value;
-        ptr->ch_num = ch_num;
-        zt_memcpy(ptr->ch_map, pch, ch_num);
-    }
 
-    /* new message entity */
+    ptr = (scan_que_refresh_msg_t *)pmsg->value;
+    ptr->ch_num = ch_num;
+    zt_memcpy(ptr->ch_map, pch, ch_num);
+    pmsg->len = sizeof(*ptr);
+
     rst = zt_msg_push(pmsg_que, pmsg);
     if (rst)
     {
+        zt_msg_del(pmsg_que, pmsg);
         WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
         return -5;
     }
 
     return 0;
 }
-
 zt_s32 zt_wlan_mgmt_chip_reset(nic_info_st *pnic_info, zt_u8 cmd)
 {
-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+    zt_wlan_mgmt_info_t *pwlan_mgmt_info;
+    zt_msg_que_t *pmsg_que;
     zt_msg_t *pmsg;
     zt_s32 rst;
+    chip_reset_msg_t *ptr;
 
-    if (pnic_info == NULL)
+    if (pnic_info == NULL || pnic_info->wlan_mgmt_info == NULL)
     {
         WLAN_MGMT_ERROR("null point");
         return -1;
     }
 
-    /* new message entity */
+    pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+    pmsg_que = &pwlan_mgmt_info->msg_que;
     rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET, &pmsg);
     if (rst)
     {
@@ -1509,28 +1519,27 @@ zt_s32 zt_wlan_mgmt_chip_reset(nic_info_st *pnic_info, zt_u8 cmd)
         return -2;
     }
 
-    /* load value */
     if (sizeof(chip_reset_msg_t) > pmsg->alloc_value_size)
     {
-        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+        zt_msg_del(pmsg_que, pmsg);
+        WLAN_MGMT_ERROR("chip reset message exceeds allocated capacity");
         return -3;
     }
-    {
-        chip_reset_msg_t *ptr = (void *)pmsg->value;
-        ptr->cmd = cmd;
-    }
 
-    /* new message entity */
+    ptr = (chip_reset_msg_t *)pmsg->value;
+    ptr->cmd = cmd;
+    pmsg->len = sizeof(*ptr);
+
     rst = zt_msg_push(pmsg_que, pmsg);
     if (rst)
     {
+        zt_msg_del(pmsg_que, pmsg);
         WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
         return -4;
     }
 
     return 0;
 }
-
 zt_s32 zt_wlan_mgmt_init(nic_info_st *pnic_info)
 {
     zt_wlan_mgmt_info_t *pwlan_mgmt_info;
@@ -1598,7 +1607,15 @@ zt_s32 zt_wlan_mgmt_term(nic_info_st *pnic_info)
         {
             WLAN_MGMT_ERROR("new message fail, error code: %d", rst);
         }
-        zt_msg_push(pmsg_que, pnew_msg);
+        else
+        {
+            rst = zt_msg_push(pmsg_que, pnew_msg);
+            if (rst)
+            {
+                zt_msg_del(pmsg_que, pnew_msg);
+                WLAN_MGMT_ERROR("uninstall message push failed: %d", rst);
+            }
+        }
     }
 
     /* destory thread */

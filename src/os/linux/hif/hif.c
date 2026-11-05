@@ -1484,7 +1484,8 @@ zt_s32 hif_write_firmware(void *node, zt_u8 which, zt_u8 *firmware, zt_u32 len)
     zt_u8 *prx_desc;
     hif_node_st *hif_node = (hif_node_st *)node;
 
-    if (hif_node->dev_removed == zt_true)
+    if (hif_node == NULL || firmware == NULL || len == 0 ||
+        len > 0xfffffffB || hif_node->dev_removed == zt_true)
     {
         return -1;
     }

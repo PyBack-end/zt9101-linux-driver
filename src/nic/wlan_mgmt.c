@@ -34,7 +34,13 @@ typedef struct
 {
     phy_status_st phy_sta;
     zt_bool is_phy_sta_valid;
-    zt_80211_mgmt_t mgmt_frm;
+    /*
+     * Management frames are variable length. Keep the payload as a flexible
+     * array member instead of embedding a structure that itself contains
+     * zero-length variable arrays. This also lets kernel FORTIFY distinguish
+     * the dynamically allocated message tail from a fixed-size struct field.
+     */
+    zt_u8 mgmt_frm[];
 } rx_frm_msg_t;
 
 typedef struct
@@ -157,8 +163,21 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                                 rx_frm_msg_t *pfrm_msg, zt_u16 frm_msg_len,
                                 zt_wlan_mgmt_scan_que_node_t *pscan_que_node)
 {
-    zt_80211_mgmt_t *pmgmt = &pfrm_msg->mgmt_frm;
-    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+    zt_80211_mgmt_t *pmgmt;
+    zt_u32 mgmt_len;
+    const zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+    const zt_u32 beacon_ie_offset =
+        ZT_OFFSETOF(zt_80211_mgmt_t, beacon.variable);
+
+    if (pfrm_msg == NULL || pscan_que_node == NULL ||
+            frm_msg_len < frame_offset + beacon_ie_offset)
+    {
+        WLAN_MGMT_WARN("truncated beacon/probe response message");
+        return -1;
+    }
+
+    pmgmt = (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm;
+    mgmt_len = frm_msg_len - frame_offset;
     zt_u8 *pele_start, *pele_end;
     zt_80211_mgmt_ie_t *pie;
     zt_80211_mgmt_dsss_parameter_t *pdsss_para;
@@ -239,12 +258,29 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
     /* mark ssid no initilize */
     pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_UNKNOWN;
 
-    pele_start = &pmgmt->beacon.variable[0];
-    pele_end = &pele_start[mgmt_len - ZT_OFFSETOF(zt_80211_mgmt_t,
-                                    beacon.variable)];
-    do
+    pele_start = (zt_u8 *)pmgmt + beacon_ie_offset;
+    pele_end = (zt_u8 *)pmgmt + mgmt_len;
+    while (pele_start < pele_end)
     {
+        zt_u32 ie_remaining = pele_end - pele_start;
+        zt_u32 ie_header_len = ZT_OFFSETOF(zt_80211_mgmt_ie_t, data);
+        zt_u8 *ie_data;
+
+        /* Every information element has a two-byte header and a bounded body. */
+        if (ie_remaining < ie_header_len)
+        {
+            WLAN_MGMT_WARN("truncated information element header");
+            return -13;
+        }
+
         pie = (zt_80211_mgmt_ie_t *)pele_start;
+        if (pie->len > ie_remaining - ie_header_len)
+        {
+            WLAN_MGMT_WARN("information element length exceeds remaining frame");
+            return -13;
+        }
+        ie_data = pele_start + ie_header_len;
+
         switch (pie->element_id)
         {
             case ZT_80211_MGMT_EID_SSID :
@@ -269,7 +305,7 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                     }
                     /* update ssid information */
                     pscan_que_node->ssid.length = pie->len;
-                    zt_memcpy(pscan_que_node->ssid.data, pie->data, pie->len);
+                    zt_memcpy(pscan_que_node->ssid.data, ie_data, pie->len);
                     pscan_que_node->ssid.data[pie->len] = '\0';
                     NODE_INFO_DBG("SSID: %s", pscan_que_node->ssid.data);
                 }
@@ -279,7 +315,7 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                     {
                         pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_ZERO_LEN;
                     }
-                    else if (pie->data[0] == '\0')
+                    else if (ie_data[0] == '\0')
                     {
                         pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_ZERO_CONTENTS;
                         pscan_que_node->ssid.length = pie->len;
@@ -288,7 +324,7 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                     {
                         pscan_que_node->ssid_type = ZT_80211_HIDDEN_SSID_NOT_IN_USE;
                         pscan_que_node->ssid.length = pie->len;
-                        zt_memcpy(pscan_que_node->ssid.data, pie->data, pie->len);
+                        zt_memcpy(pscan_que_node->ssid.data, ie_data, pie->len);
                         pscan_que_node->ssid.data[pie->len] = '\0';
                         NODE_INFO_DBG("SSID: %s", pscan_que_node->ssid.data);
                     }
@@ -312,25 +348,40 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                 else
                 {
                     zt_memcpy(&pscan_que_node->spot_rate[support_rate_cnt],
-                              pie->data, pie->len);
+                              ie_data, pie->len);
                     support_rate_cnt += pie->len;
                 }
                 break;
 
             case ZT_80211_MGMT_EID_DS_PARAMS :
-                pdsss_para = (zt_80211_mgmt_dsss_parameter_t *)pie->data;
+                if (pie->len < sizeof(*pdsss_para))
+                {
+                    WLAN_MGMT_WARN("truncated DS parameter element");
+                    return -13;
+                }
+                pdsss_para = (zt_80211_mgmt_dsss_parameter_t *)ie_data;
                 pscan_que_node->channel = pdsss_para->current_channel;
                 break;
 
             case ZT_80211_MGMT_EID_HT_OPERATION :
                 /* for 5G AP */
-                pht_oper = (zt_80211_mgmt_ht_operation_t *)pie->data;
+                if (pie->len < sizeof(*pht_oper))
+                {
+                    WLAN_MGMT_WARN("truncated HT operation element");
+                    return -13;
+                }
+                pht_oper = (zt_80211_mgmt_ht_operation_t *)ie_data;
                 pscan_que_node->channel = pht_oper->primary_chan;
                 break;
 
             case ZT_80211_MGMT_EID_HT_CAPABILITY :
+                if (pie->len < sizeof(*pht_cap))
+                {
+                    WLAN_MGMT_WARN("truncated HT capability element");
+                    return -13;
+                }
                 pscan_que_node->ht_cap_en = zt_true;
-                pht_cap = (zt_80211_mgmt_ht_cap_t *)pie->data;
+                pht_cap = (zt_80211_mgmt_ht_cap_t *)ie_data;
                 zt_memcpy(&pscan_que_node->mcs, pht_cap->mcs_info.rx_mask,
                           sizeof(pscan_que_node->mcs));
                 pscan_que_node->bw_40mhz =
@@ -343,9 +394,14 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                 break;
 
             case ZT_80211_MGMT_EID_VENDOR_SPECIFIC :
-                if (!zt_memcmp(pie->data, wpa_oui, sizeof(wpa_oui)))
+                if (pie->len < sizeof(wpa_oui))
                 {
-                    if (pie->len <= sizeof(pscan_que_node->wpa_ie))
+                    break;
+                }
+                if (!zt_memcmp(ie_data, wpa_oui, sizeof(wpa_oui)))
+                {
+                    if (pie->len <= sizeof(pscan_que_node->wpa_ie) -
+                            ZT_OFFSETOF(zt_80211_mgmt_ie_t, data))
                     {
                         zt_u32 len = sizeof(zt_80211_mgmt_ie_t) + pie->len;
 
@@ -360,9 +416,10 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                         return -6;
                     }
                 }
-                else if (!zt_memcmp(pie->data, wps_oui, sizeof(wps_oui)))
+                else if (!zt_memcmp(ie_data, wps_oui, sizeof(wps_oui)))
                 {
-                    if (pie->len <= sizeof(pscan_que_node->wps_ie))
+                    if (pie->len <= sizeof(pscan_que_node->wps_ie) -
+                            ZT_OFFSETOF(zt_80211_mgmt_ie_t, data))
                     {
                         zt_memcpy(&pscan_que_node->wps_ie, pie,
                                   ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len);
@@ -375,7 +432,8 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                 break;
 
             case ZT_80211_MGMT_EID_RSN :
-                if (pie->len <= sizeof(pscan_que_node->rsn_ie))
+                if (pie->len <= sizeof(pscan_que_node->rsn_ie) -
+                        ZT_OFFSETOF(zt_80211_mgmt_ie_t, data))
                 {
                     zt_u32 len = sizeof(zt_80211_mgmt_ie_t) + pie->len;
 
@@ -391,9 +449,9 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
                 }
                 break;
         }
-        /* get next element point */
-        pele_start = &pele_start[ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len];
-    } while (pele_start < pele_end);
+        /* Advance only after the complete IE has been validated. */
+        pele_start += ie_header_len + pie->len;
+    }
 
     /* parse validity check */
     if (pscan_que_node->ssid_type == ZT_80211_HIDDEN_SSID_UNKNOWN)
@@ -916,7 +974,7 @@ static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
                     rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
                     zt_u16 frm_msg_len = pmsg->len;
                     zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
-                    zt_p2p_recv_probereq(pnic_info,  &pfrm_msg->mgmt_frm, mgmt_len);
+                    zt_p2p_recv_probereq(pnic_info,  (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm, mgmt_len);
                     break;
                 }
 
@@ -927,7 +985,7 @@ static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
                     zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
                     //WLAN_MGMT_INFO("action frame");
 
-                    zt_action_frame_process(pnic_info, &pfrm_msg->mgmt_frm, mgmt_len);
+                    zt_action_frame_process(pnic_info, (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm, mgmt_len);
                     break;
                 }
 
@@ -969,11 +1027,19 @@ static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
                            phy_status_st *phy_sta,
                            zt_80211_mgmt_t *pmgmt, zt_u32 mgmt_len)
 {
-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
-    zt_msg_t *pmsg;
+    zt_msg_que_t *pmsg_que;
+    zt_msg_t *pmsg = NULL;
+    rx_frm_msg_t *prx_frm_msg;
+    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+    zt_u32 value_size;
     zt_s32 rst;
 
-    /* new message entity */
+    if (pwlan_mgmt_info == NULL || pmgmt == NULL || mgmt_len == 0)
+    {
+        return -1;
+    }
+
+    pmsg_que = &pwlan_mgmt_info->msg_que;
     rst = zt_msg_new(pmsg_que, tag, &pmsg);
     if (rst)
     {
@@ -981,39 +1047,44 @@ static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
         return -1;
     }
 
-    /* fill message value */
+    if (pmsg == NULL || pmsg->value == NULL ||
+            pmsg->alloc_value_size < frame_offset ||
+            mgmt_len > pmsg->alloc_value_size - frame_offset)
     {
-        rx_frm_msg_t *prx_frm_msg = (void *)pmsg->value;
-        zt_u16 value_size = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) + mgmt_len;
-        if (value_size > pmsg->alloc_value_size)
+        WLAN_MGMT_ERROR("frame size(%u) exceeds message capacity(%u)",
+                        mgmt_len, pmsg ? pmsg->alloc_value_size : 0);
+        if (pmsg != NULL)
         {
-            WLAN_MGMT_ERROR("frame size(%d) over limite(%d)",
-                            mgmt_len, pmsg->alloc_value_size);
-            return -2;
+            zt_msg_del(pmsg_que, pmsg);
         }
-        pmsg->len = value_size;
-        if (phy_sta)
-        {
-            prx_frm_msg->phy_sta            = *phy_sta;
-            prx_frm_msg->is_phy_sta_valid   = zt_true;
-        }
-        else
-        {
-            prx_frm_msg->phy_sta.rssi               = -128;
-            prx_frm_msg->phy_sta.signal_strength    = 0;
-            prx_frm_msg->phy_sta.signal_qual        = 0;
-            prx_frm_msg->is_phy_sta_valid           = zt_false;
-        }
-
-        void *tmp_mgmt_fram = (zt_s8 *)prx_frm_msg + ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
-        zt_memcpy(tmp_mgmt_fram, pmgmt, mgmt_len);
+        return -2;
     }
 
-    /* new message entity */
+    value_size = frame_offset + mgmt_len;
+    prx_frm_msg = (rx_frm_msg_t *)pmsg->value;
+    pmsg->len = value_size;
+
+    if (phy_sta)
+    {
+        prx_frm_msg->phy_sta = *phy_sta;
+        prx_frm_msg->is_phy_sta_valid = zt_true;
+    }
+    else
+    {
+        prx_frm_msg->phy_sta.rssi = -128;
+        prx_frm_msg->phy_sta.signal_strength = 0;
+        prx_frm_msg->phy_sta.signal_qual = 0;
+        prx_frm_msg->is_phy_sta_valid = zt_false;
+    }
+
+    /* mgmt_frm is a flexible tail, so this copy is bounded by alloc_value_size. */
+    zt_memcpy(prx_frm_msg->mgmt_frm, (const zt_u8 *)pmgmt, mgmt_len);
+
     rst = zt_msg_push(pmsg_que, pmsg);
     if (rst)
     {
         WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+        zt_msg_del(pmsg_que, pmsg);
         return -3;
     }
 
@@ -1051,12 +1122,12 @@ zt_s32 zt_wlan_mgmt_rx_frame(void *ptr)
     }
 
     mgmt_len = ppkt->len;
-    if (mgmt_len == 0)
+    if (mgmt_len < sizeof(zt_80211_hdr_3addr_t))
     {
-        WLAN_MGMT_ERROR("frame length zero");
+        WLAN_MGMT_WARN("management frame too short: %u", mgmt_len);
         return -5;
     }
-    pmgmt = (void *)ppkt->pdata;
+    pmgmt = (zt_80211_mgmt_t *)ppkt->pdata;
 
     pwdn_info = ppkt->wdn_info;
     if (pwdn_info)

@@ -111,13 +111,15 @@ init_fail:
 
 static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
 {
+    zt_s32 ret = ZT_RETURN_OK;
+
     LOG_D("[NIC] prv_hardware_term - entry");
 
     /* rx term */
     if (zt_rx_term(pnic_info) < 0)
     {
         LOG_E("===>zt_rx_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* tx term */
@@ -145,7 +147,7 @@ static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
 
     LOG_D("[NIC] prv_hardware_term - exit");
 
-    return ZT_RETURN_OK;
+    return ret;
 }
 
 zt_s32 nic_init(nic_info_st *pnic_info)

@@ -381,7 +381,7 @@ int hif_firmware_read_get(zt_u8 firmware_no,
 
         for (i = 0; i < file_header.firmware_num; i++)
         {
-            zt_u32 payload_offset;
+            zt_u64 payload_offset;
             zt_u32 payload_length;
             zt_s8 **payload;
             zt_u32 *payload_size;
@@ -416,7 +416,7 @@ int hif_firmware_read_get(zt_u8 firmware_no,
                     goto firmware_file_fail;
                 }
                 have_fw1 = zt_true;
-                payload_offset = fw_header.offset + 32;
+                payload_offset = (zt_u64)fw_header.offset + 32;
                 payload_length = fw_header.length - 32;
                 payload = &firmware_info->fw1;
                 payload_size = &firmware_info->fw1_size;

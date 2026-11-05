@@ -2336,9 +2336,16 @@ zt_s32 zt_iw_setEncExt(struct net_device *ndev,
     }
     pencoding = &wrqu->encoding;
     pext = (struct iw_encode_ext *)extra;
-    if (!iw_key_len_valid(pext->alg, pext->key_len))
+    if (pencoding->length < ZT_OFFSETOF(struct iw_encode_ext, key))
     {
-        IW_FUNC_WARN("invalid key cipher or length");
+        IW_FUNC_WARN("truncated encode-ext header");
+        return -EINVAL;
+    }
+    if (pencoding->length <
+            ZT_OFFSETOF(struct iw_encode_ext, key) + pext->key_len ||
+            !iw_key_len_valid(pext->alg, pext->key_len))
+    {
+        IW_FUNC_WARN("invalid key cipher, length or payload size");
         return -EINVAL;
     }
 

@@ -950,12 +950,17 @@ static void zt_usb_disconnect(struct usb_interface *pusb_intf)
 
     LOG_D("************USB DISCONNECT*************");
 
+    if (NULL == hif_node)
+    {
+        USB_WARN("[usb] disconnect called without a registered HIF node");
+        return;
+    }
+
     /* ndev unregister should been do first */
     ndev_unregister_all(hif_node->nic_info, hif_node->nic_number);
 
     hif_dev_removed(hif_node);
 
-    if (NULL != hif_node)
     {
         ret = hm_del_usb_id(hif_node->u.usb.usb_id);
         if (ret)
@@ -965,10 +970,6 @@ static void zt_usb_disconnect(struct usb_interface *pusb_intf)
         zt_kfree(hif_node->u.usb.ctrl_msg_buffer);
         zt_endpoint_deinit(pusb_intf);
         hif_node_unregister(hif_node);
-    }
-    else
-    {
-        USB_WARN("[usb] zt_usb_disconnect failed");
     }
 }
 

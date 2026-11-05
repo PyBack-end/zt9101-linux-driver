@@ -1415,13 +1415,18 @@ void zt_cfg80211_scan_done_event_up(nic_info_st *pnic_info, zt_bool babort)
     pwdev_info->scan_req_finalizing = zt_false;
     zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
 
-    if (req != NULL && req->wiphy == pnic_info->pwiphy)
+    if (req != NULL)
     {
+        if (req->wiphy != pnic_info->pwiphy)
+        {
+            LOG_W("[%s]: scan request wiphy mismatch; completing as aborted",
+                  __func__);
+            babort = zt_true;
+#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
+            info.aborted = true;
+#endif
+        }
         notify = zt_true;
-    }
-    else if (req != NULL)
-    {
-        LOG_W("[%s]: scan request wiphy mismatch", __func__);
     }
     else
     {

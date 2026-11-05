@@ -992,8 +992,15 @@ insert_fail:
         if (hif_info->nic_info[i])
         {
             ndev_unregister(hif_info->nic_info[i]);
+            if (i == 0 && hif_info->nic_number > 1 && hif_info->nic_info[1])
+            {
+                hif_info->nic_info[1]->buddy_nic = NULL;
+            }
+            zt_kfree(hif_info->nic_info[i]);
+            hif_info->nic_info[i] = NULL;
         }
     }
+    hif_info->nic_number = 0;
     return ZT_RETURN_FAIL;
 }
 

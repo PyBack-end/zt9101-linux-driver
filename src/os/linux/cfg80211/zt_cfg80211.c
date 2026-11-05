@@ -2156,10 +2156,12 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
         return -EINVAL;
     }
 
+    mutex_lock(&pwdev_info->scan_req_mutex);
     zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
     if (pwdev_info->pscan_request != NULL)
     {
         zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+        mutex_unlock(&pwdev_info->scan_req_mutex);
         return -EBUSY;
     }
     pwdev_info->pscan_request = req;
@@ -2402,6 +2404,7 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
         scan_done = zt_true;
 
 exit:
+    mutex_unlock(&pwdev_info->scan_req_mutex);
     if (scan_done == zt_true)
     {
         if(zt_cfg80211_scan_complete(pnic_info)){

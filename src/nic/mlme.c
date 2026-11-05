@@ -1581,7 +1581,7 @@ static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
     {
         zt_msg_del(pmsg_que, pmsg);
         MLME_WARN("zt_msg_push fail error code: %d", rst);
-        return -4;
+        return -5;
     }
 
     return 0;
@@ -1759,7 +1759,7 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
     {
         zt_msg_del(pmsg_que, pmsg);
         MLME_WARN("msg push fail error code: %d", rst);
-        return -5;
+        return -6;
     }
 
     return 0;

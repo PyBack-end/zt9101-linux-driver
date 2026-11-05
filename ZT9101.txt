@@ -1,0 +1,4048 @@
+pythango_dev@V0id:/tmp/zt9101-linux-driver-publish$ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+pythango_dev@V0id:/tmp/zt9101-linux-driver-publish$ cd /tmp/zt9101-linux-driver-publish
+
+echo "=== CURRENT BRANCH AND COMMIT ==="
+git status --short --branch
+git log -1 --oneline
+
+echo
+echo "=== RX MESSAGE STRUCTURE ==="
+nl -ba src/nic/wlan_mgmt.c | sed -n '25,45p'
+
+echo
+echo "=== RX MESSAGE DIFF ==="
+git diff origin/main...HEAD -- src/nic/wlan_mgmt.c | grep -n -A15 -B15 'rx_frm_msg_t\|mgmt_frm'
+
+echo
+echo "=== MESSAGE TYPE DEFINITION ==="
+git grep -n -A35 -B10 'zt_msg_t'
+
+echo
+echo "=== MESSAGE ALLOCATOR IMPLEMENTATION ==="
+git grep -n -A65 -B15 'zt_msg_alloc('
+
+echo
+echo "=== MESSAGE ALLOCATOR CALL SITES ==="
+nl -ba src/nic/auth.c | sed -n '915,945p'
+nl -ba src/nic/assoc.c | sed -n '1280,1310p'
+
+echo
+echo "=== MLME MESSAGE QUEUE INITIALIZATION ==="
+git grep -n -A15 -B10 'ZT_MLME_TAG_SCAN_RSP'
+
+echo
+echo "=== KEY PARAMETER STRUCTURE ==="
+nl -ba src/os/linux/cfg80211/zt_cfg80211.c | sed -n '35,75p'
+nl -ba src/os/linux/cfg80211/zt_cfg80211.c | sed -n '700,830p'
+nl -ba src/os/linux/cfg80211/zt_cfg80211.c | sed -n '890,960p'
+
+echo
+echo "=== KEY ARRAY DEFINITIONS ==="
+nl -ba src/nic/sec.h | sed -n '115,140p'
+
+echo
+echo "=== PR FILE SUMMARY ==="
+git diff --stat origin/main...HEAD
+=== CURRENT BRANCH AND COMMIT ===
+## fix/rx-management-frame-safety
+c9a236a (HEAD -> fix/rx-management-frame-safety) Guard mesh P2P SSID access and keep RX parser declarations portable
+
+=== RX MESSAGE STRUCTURE ===
+    25	#define WLAN_MGMT_WARN(fmt, ...)    LOG_W("[%s:%d]"fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+    26	#define WLAN_MGMT_ERROR(fmt, ...)   LOG_E("[%s:%d]"fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+    27	
+    28	#define LOCAL_INFO                  ((local_info_st *)pnic_info->local_info)
+    29	#define WLAN_MGMT_SCAN_QUE_DEEP     LOCAL_INFO->scan_que_deep
+    30	#define WLAN_MGMT_SCAN_NODE_TTL     LOCAL_INFO->scan_que_node_ttl
+    31	
+    32	/* type define */
+    33	typedef struct
+    34	{
+    35	    phy_status_st phy_sta;
+    36	    zt_bool is_phy_sta_valid;
+    37	    /*
+    38	     * Management frames are variable length. Keep the payload as a flexible
+    39	     * array member instead of embedding a structure that itself contains
+    40	     * zero-length variable arrays. This also lets kernel FORTIFY distinguish
+    41	     * the dynamically allocated message tail from a fixed-size struct field.
+    42	     */
+    43	    zt_u8 mgmt_frm[];
+    44	} rx_frm_msg_t;
+    45	
+
+=== RX MESSAGE DIFF ===
+1-diff --git a/src/nic/wlan_mgmt.c b/src/nic/wlan_mgmt.c
+2-index 8271d2d..4091230 100644
+3---- a/src/nic/wlan_mgmt.c
+4-+++ b/src/nic/wlan_mgmt.c
+5-@@ -34,7 +34,13 @@ typedef struct
+6- {
+7-     phy_status_st phy_sta;
+8-     zt_bool is_phy_sta_valid;
+9:-    zt_80211_mgmt_t mgmt_frm;
+10-+    /*
+11-+     * Management frames are variable length. Keep the payload as a flexible
+12-+     * array member instead of embedding a structure that itself contains
+13-+     * zero-length variable arrays. This also lets kernel FORTIFY distinguish
+14-+     * the dynamically allocated message tail from a fixed-size struct field.
+15-+     */
+16:+    zt_u8 mgmt_frm[];
+17: } rx_frm_msg_t;
+18- 
+19- typedef struct
+20-@@ -157,8 +163,8 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
+21:                                 rx_frm_msg_t *pfrm_msg, zt_u16 frm_msg_len,
+22-                                 zt_wlan_mgmt_scan_que_node_t *pscan_que_node)
+23- {
+24:-    zt_80211_mgmt_t *pmgmt = &pfrm_msg->mgmt_frm;
+25:-    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+26-+    zt_80211_mgmt_t *pmgmt;
+27-+    zt_u32 mgmt_len;
+28-     zt_u8 *pele_start, *pele_end;
+29-     zt_80211_mgmt_ie_t *pie;
+30-     zt_80211_mgmt_dsss_parameter_t *pdsss_para;
+31-@@ -170,6 +176,19 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
+32-     zt_u8 wpa_oui[4] = {0x0, 0x50, 0xf2, 0x01};
+33-     zt_u8 wps_oui[4] = {0x0, 0x50, 0xf2, 0x04};
+34-     zt_80211_frame_e frame_type;
+35:+    const zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+36-+    const zt_u32 beacon_ie_offset =
+37-+        ZT_OFFSETOF(zt_80211_mgmt_t, beacon.variable);
+38-+
+39-+    if (pfrm_msg == NULL || pscan_que_node == NULL ||
+40-+            frm_msg_len < frame_offset + beacon_ie_offset)
+41-+    {
+42-+        WLAN_MGMT_WARN("truncated beacon/probe response message");
+43-+        return -1;
+44-+    }
+45-+
+46:+    pmgmt = (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm;
+47-+    mgmt_len = frm_msg_len - frame_offset;
+48- 
+49-     NODE_INFO_DBG("----------------------------");
+50- 
+51-@@ -209,8 +228,21 @@ zt_s32 wlan_mgmt_scan_node_info(nic_info_st *pnic_info,
+52-         if (zt_p2p_is_valid(pnic_info))
+53-         {
+54-             p2p_info_st *p2p_info = pnic_info->p2p;
+55--            if (!zt_memcmp(&pmgmt->beacon.variable[2],
+56--                           p2p_info->p2p_wildcard_ssid, P2P_WILDCARD_SSID_LEN))
+57-+            zt_u32 variable_len = mgmt_len - beacon_ie_offset;
+58-+
+59-+            /*
+60-+             * The mesh/P2P fast path expects the first IE to be the complete
+61-+             * wildcard SSID. Validate its header and payload before comparing.
+--
+222-                 }
+223-                 break;
+224-         }
+225--        /* get next element point */
+226--        pele_start = &pele_start[ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len];
+227--    } while (pele_start < pele_end);
+228-+        /* Advance only after the complete IE has been validated. */
+229-+        pele_start += ie_header_len + pie->len;
+230-+    }
+231- 
+232-     /* parse validity check */
+233-     if (pscan_que_node->ssid_type == ZT_80211_HIDDEN_SSID_UNKNOWN)
+234-@@ -914,20 +985,40 @@ static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
+235-                 case ZT_WLAN_MGMT_TAG_PROBEREQ_P2P :
+236-                 {
+237:                     rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+238--                    zt_u16 frm_msg_len = pmsg->len;
+239:-                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+240:-                    zt_p2p_recv_probereq(pnic_info,  &pfrm_msg->mgmt_frm, mgmt_len);
+241-+                    zt_u32 frm_msg_len = pmsg->len;
+242:+                    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+243-+                    zt_u32 mgmt_len;
+244-+
+245-+                    if (frm_msg_len < frame_offset + sizeof(zt_80211_hdr_3addr_t))
+246-+                    {
+247-+                        WLAN_MGMT_WARN("truncated P2P probe request message");
+248-+                        break;
+249-+                    }
+250-+                    mgmt_len = frm_msg_len - frame_offset;
+251-+                    zt_p2p_recv_probereq(pnic_info,
+252:+                                         (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm,
+253-+                                         (zt_u16)mgmt_len);
+254-                     break;
+255-                 }
+256- 
+257-                 case ZT_WLAN_MGMT_TAG_ACTION :
+258-                 {
+259:                     rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+260--                    zt_u16 frm_msg_len = pmsg->len;
+261:-                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+262-+                    zt_u32 frm_msg_len = pmsg->len;
+263:+                    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+264-+                    zt_u32 mgmt_len;
+265-+
+266-+                    if (frm_msg_len < frame_offset + sizeof(zt_80211_hdr_3addr_t))
+267-+                    {
+268-+                        WLAN_MGMT_WARN("truncated action frame message");
+269-+                        break;
+270-+                    }
+271-+                    mgmt_len = frm_msg_len - frame_offset;
+272-                     //WLAN_MGMT_INFO("action frame");
+273- 
+274:-                    zt_action_frame_process(pnic_info, &pfrm_msg->mgmt_frm, mgmt_len);
+275-+                    zt_action_frame_process(pnic_info,
+276:+                                            (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm,
+277-+                                            (zt_u16)mgmt_len);
+278-                     break;
+279-                 }
+280- 
+281-@@ -969,11 +1060,19 @@ static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
+282-                            phy_status_st *phy_sta,
+283-                            zt_80211_mgmt_t *pmgmt, zt_u32 mgmt_len)
+284- {
+285--    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+286--    zt_msg_t *pmsg;
+287-+    zt_msg_que_t *pmsg_que;
+288-+    zt_msg_t *pmsg = NULL;
+289:+    rx_frm_msg_t *prx_frm_msg;
+290:+    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+291-+    zt_u32 value_size;
+292-     zt_s32 rst;
+293- 
+294--    /* new message entity */
+295-+    if (pwlan_mgmt_info == NULL || pmgmt == NULL || mgmt_len == 0)
+296-+    {
+297-+        return -1;
+298-+    }
+299-+
+300-+    pmsg_que = &pwlan_mgmt_info->msg_que;
+301-     rst = zt_msg_new(pmsg_que, tag, &pmsg);
+302-     if (rst)
+303-     {
+304-@@ -981,39 +1080,43 @@ static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
+305-         return -1;
+306-     }
+307- 
+308--    /* fill message value */
+309-+    if (pmsg == NULL || pmsg->alloc_value_size < frame_offset ||
+310-+            mgmt_len > pmsg->alloc_value_size - frame_offset)
+311-     {
+312:-        rx_frm_msg_t *prx_frm_msg = (void *)pmsg->value;
+313:-        zt_u16 value_size = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) + mgmt_len;
+314--        if (value_size > pmsg->alloc_value_size)
+315--        {
+316--            WLAN_MGMT_ERROR("frame size(%d) over limite(%d)",
+317--                            mgmt_len, pmsg->alloc_value_size);
+318--            return -2;
+319--        }
+320--        pmsg->len = value_size;
+321--        if (phy_sta)
+322--        {
+323--            prx_frm_msg->phy_sta            = *phy_sta;
+324--            prx_frm_msg->is_phy_sta_valid   = zt_true;
+325--        }
+326--        else
+327-+        WLAN_MGMT_ERROR("frame size(%u) exceeds message capacity(%u)",
+328-+                        mgmt_len, pmsg ? pmsg->alloc_value_size : 0);
+329-+        if (pmsg != NULL)
+330-         {
+331--            prx_frm_msg->phy_sta.rssi               = -128;
+332--            prx_frm_msg->phy_sta.signal_strength    = 0;
+333--            prx_frm_msg->phy_sta.signal_qual        = 0;
+334--            prx_frm_msg->is_phy_sta_valid           = zt_false;
+335-+            zt_msg_del(pmsg_que, pmsg);
+336-         }
+337-+        return -2;
+338-+    }
+339- 
+340:-        void *tmp_mgmt_fram = (zt_s8 *)prx_frm_msg + ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+341--        zt_memcpy(tmp_mgmt_fram, pmgmt, mgmt_len);
+342-+    value_size = frame_offset + mgmt_len;
+343:+    prx_frm_msg = (rx_frm_msg_t *)pmsg->value;
+344-+    pmsg->len = value_size;
+345-+
+346-+    if (phy_sta)
+347-+    {
+348-+        prx_frm_msg->phy_sta = *phy_sta;
+349-+        prx_frm_msg->is_phy_sta_valid = zt_true;
+350-+    }
+351-+    else
+352-+    {
+353-+        prx_frm_msg->phy_sta.rssi = -128;
+354-+        prx_frm_msg->phy_sta.signal_strength = 0;
+355-+        prx_frm_msg->phy_sta.signal_qual = 0;
+356-+        prx_frm_msg->is_phy_sta_valid = zt_false;
+357-     }
+358- 
+359--    /* new message entity */
+360:+    /* mgmt_frm is a flexible tail, so this copy is bounded by alloc_value_size. */
+361:+    zt_memcpy(prx_frm_msg->mgmt_frm, (const zt_u8 *)pmgmt, mgmt_len);
+362-+
+363-     rst = zt_msg_push(pmsg_que, pmsg);
+364-     if (rst)
+365-     {
+366-         WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+367-+        zt_msg_del(pmsg_que, pmsg);
+368-         return -3;
+369-     }
+370- 
+371-@@ -1051,12 +1154,12 @@ zt_s32 zt_wlan_mgmt_rx_frame(void *ptr)
+372-     }
+373- 
+374-     mgmt_len = ppkt->len;
+375--    if (mgmt_len == 0)
+376-+    if (mgmt_len < sizeof(zt_80211_hdr_3addr_t))
+
+=== MESSAGE TYPE DEFINITION ===
+q.txt-307-src/nic/wlan_mgmt.c-1301-                         sizeof(scan_que_refresh_msg_t), 2) ||
+q.txt-308-src/nic/wlan_mgmt.c-1302-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET,
+q.txt-309-src/nic/wlan_mgmt.c-1303-                         sizeof(chip_reset_msg_t), 2)) ? -1 : 0;
+q.txt-310-src/nic/wlan_mgmt.c-1304-}
+q.txt-311-src/nic/wlan_mgmt.c-1305-
+q.txt-312-src/nic/wlan_mgmt.c-1306-zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+q.txt-313-src/nic/wlan_mgmt.c-1307-{
+q.txt-314-src/nic/wlan_mgmt.c-1308-    zt_msg_deinit(&pwlan_mgmt_info->msg_que);
+q.txt-315-src/nic/wlan_mgmt.c-1309-}
+q.txt-316-src/nic/wlan_mgmt.c-1310-
+q.txt:317:src/nic/wlan_mgmt.c-1311-zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
+q.txt-318-src/nic/wlan_mgmt.c-1312-{
+q.txt-319-src/nic/wlan_mgmt.c-1313-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+q.txt-320-src/nic/wlan_mgmt.c-1314-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+q.txt:321:src/nic/wlan_mgmt.c-1315-    zt_msg_t *pmsg;
+q.txt-322-src/nic/wlan_mgmt.c-1316-    zt_s32 rst;
+q.txt-323-src/nic/wlan_mgmt.c-1317-
+q.txt-324-src/nic/wlan_mgmt.c-1318-    /* new message entity */
+q.txt-325-src/nic/wlan_mgmt.c-1319-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-326-src/nic/wlan_mgmt.c-1320-    if (rst)
+q.txt-327-src/nic/wlan_mgmt.c-1321-    {
+q.txt-328-===== MESSAGE QUEUE ALLOCATION AND CLEANUP =====
+q.txt-329-src/nic/adhoc.c:852:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, &pmsg);
+q.txt-330-src/nic/adhoc.c:858:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-331-src/nic/adhoc.c:892:        rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
+q.txt-332-src/nic/adhoc.c:900:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-333-src/nic/assoc.c:1017:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_RSP, &pmsg);
+q.txt-334-src/nic/assoc.c:1025:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-335-src/nic/assoc.c:1229:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_START, &pmsg);
+q.txt-336-src/nic/assoc.c:1235:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-337-src/nic/assoc.c:1273:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_ABORT, &pmsg);
+q.txt-338-src/nic/assoc.c:1279:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-339-src/nic/auth.c:770:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_START, &pmsg);
+q.txt-340-src/nic/auth.c:776:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-341-src/nic/auth.c:811:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_ABORT, &pmsg);
+q.txt-342-src/nic/auth.c:817:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-343-src/nic/auth.c:874:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_RSP, &pmsg);
+q.txt-344-src/nic/auth.c:882:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-345-src/nic/lps.c:768:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_LPS, &pmsg);
+q.txt-346-src/nic/lps.c:778:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-347-src/nic/mlme.c:400:                zt_msg_push(pmsg_que, pmsg);
+q.txt-348-src/nic/mlme.c:457:                zt_msg_push(pmsg_que, pmsg);
+q.txt-349-src/nic/mlme.c:517:                zt_msg_push(pmsg_que, pmsg);
+q.txt-350-src/nic/mlme.c:1561:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-351-src/nic/mlme.c:1564:        MLME_WARN("zt_msg_new fail error code: %d", rst);
+q.txt-352-src/nic/mlme.c:1573:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-353-src/nic/mlme.c:1577:        MLME_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-354-src/nic/mlme.c:1632:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN, &pmsg);
+q.txt-355-src/nic/mlme.c:1655:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-356-src/nic/mlme.c:1736:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+q.txt-357-src/nic/mlme.c:1745:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-358-src/nic/mlme.c:1815:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN, &pmsg);
+q.txt-359-src/nic/mlme.c:1846:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-360-src/nic/mlme.c:2226:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN_IBSS, &pmsg);
+q.txt-361-src/nic/mlme.c:2242:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-362-src/nic/scan.c:1294:    rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_START, &pmsg);
+q.txt-363-src/nic/scan.c:1330:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-364-src/nic/scan.c:1361:        rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_ABORT, &pmsg);
+q.txt-365-src/nic/scan.c:1367:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-366-src/nic/scan.c:1433:    zt_msg_free(pmsg_que);
+q.txt:367:src/nic/utility/zt_msg.c:55:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
+q.txt:368:src/nic/utility/zt_msg.c:92:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt:369:src/nic/utility/zt_msg.c:120:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt-370-src/nic/utility/zt_msg.c:253:        pmsg->alloc_value_size = size;
+q.txt-371-src/nic/utility/zt_msg.c:262:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+q.txt-372-src/nic/utility/zt_msg.h:59:    zt_u32 alloc_value_size;
+q.txt:373:src/nic/utility/zt_msg.h:77:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag,
+q.txt:374:src/nic/utility/zt_msg.h:79:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+q.txt:375:src/nic/utility/zt_msg.h:80:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+q.txt-376-src/nic/utility/zt_msg.h:139:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que);
+q.txt-377-src/nic/utility/zt_msg.h:150:    zt_msg_free(pmsg_que);
+q.txt-378-src/nic/wlan_mgmt.c:977:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-379-src/nic/wlan_mgmt.c:987:        zt_u16 value_size = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) + mgmt_len;
+q.txt-380-src/nic/wlan_mgmt.c:988:        if (value_size > pmsg->alloc_value_size)
+q.txt-381-src/nic/wlan_mgmt.c:991:                            mgmt_len, pmsg->alloc_value_size);
+q.txt-382-src/nic/wlan_mgmt.c:994:        pmsg->len = value_size;
+q.txt-383-src/nic/wlan_mgmt.c:1013:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-384-src/nic/wlan_mgmt.c:1016:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-385-src/nic/wlan_mgmt.c:1319:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-386-src/nic/wlan_mgmt.c:1327:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-387-src/nic/wlan_mgmt.c:1330:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-388-src/nic/wlan_mgmt.c:1358:    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH, &pmsg);
+q.txt-389-src/nic/wlan_mgmt.c:1366:    if (sizeof(scan_que_refresh_msg_t) > pmsg->alloc_value_size)
+q.txt-390-src/nic/wlan_mgmt.c:1368:        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+q.txt-391-src/nic/wlan_mgmt.c:1378:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-392-src/nic/wlan_mgmt.c:1381:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-393-src/nic/wlan_mgmt.c:1402:    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET, &pmsg);
+q.txt-394-src/nic/wlan_mgmt.c:1410:    if (sizeof(chip_reset_msg_t) > pmsg->alloc_value_size)
+q.txt-395-src/nic/wlan_mgmt.c:1412:        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+q.txt-396-src/nic/wlan_mgmt.c:1421:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-397-src/nic/wlan_mgmt.c:1424:        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-398-src/nic/wlan_mgmt.c:1493:        rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, &pnew_msg);
+q.txt-399-src/nic/wlan_mgmt.c:1498:        zt_msg_push(pmsg_que, pnew_msg);
+q.txt-400-===== MANAGEMENT FRAME PARSER =====
+q.txt-401-   180            /* get the phy status */
+q.txt-402-   181            if (pfrm_msg->is_phy_sta_valid)
+q.txt-403-   182            {
+q.txt-404-   183                pscan_que_node->signal_strength = pfrm_msg->phy_sta.signal_strength;
+q.txt-405-   184                pscan_que_node->signal_strength_scale =
+q.txt-406-   185                    signal_scale_mapping(pfrm_msg->phy_sta.signal_strength);
+q.txt-407-   186                pscan_que_node->signal_qual = pfrm_msg->phy_sta.signal_qual;
+q.txt-408-   187            }
+q.txt-409-   188            NODE_INFO_DBG("RSSI=%d, signal stregth=%d, signal quality=%d",
+q.txt-410-   189                          translate_percentage_to_dbm(pscan_que_node->signal_strength),
+--
+q.txt-573-   810        
+q.txt-574-   811            return 0;
+q.txt-575-   812        }
+q.txt-576-   813        
+q.txt-577-   814        static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
+q.txt-578-   815        {
+q.txt-579-   816            zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+q.txt-580-   817            pwr_info_st *pwr_info = pnic_info->pwr_info;
+q.txt-581-   818            zt_wlan_mgmt_scan_que_t *pscan_que = &pwlan_mgmt_info->scan_que;
+q.txt-582-   819            zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+q.txt:583:   820            zt_msg_t *pmsg;
+q.txt-584-   821            zt_bool uninstalling = zt_false;
+q.txt-585-   822            zt_s32 rst;
+q.txt-586-   823        
+q.txt-587-   824            zt_os_api_thread_enter_hook(pwlan_mgmt_info->tid);
+q.txt-588-   825        
+q.txt-589-   826            while (zt_os_api_thread_wait_stop(pwlan_mgmt_info->tid) == zt_false)
+q.txt-590-   827            {
+q.txt-591-   828                zt_msleep(1);
+q.txt-592-   829        
+q.txt-593-   830                /* wait new message */
+q.txt-594-   831                while (!zt_msg_pop(pmsg_que, &pmsg))
+q.txt-595-   832                {
+q.txt-596-   833                    if (pwr_info->bInSuspend || uninstalling)
+q.txt-597-   834                    {
+q.txt-598-   835                        break;
+q.txt-599-   836                    }
+q.txt-600-   837        
+q.txt-601-   838                    switch (pmsg->tag)
+q.txt-602-   839                    {
+q.txt-603-   840                        case ZT_WLAN_MGMT_TAG_BEACON_FRAME :
+q.txt-604-   841                        case ZT_WLAN_MGMT_TAG_PROBERSP_FRAME :
+q.txt-605-   842                        {
+q.txt-606-   843                            rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+q.txt-607-   844                            zt_u16 frm_msg_len = pmsg->len;
+q.txt-608-   845                            zt_wlan_mgmt_scan_que_node_t *pnew_node;
+q.txt-609-   846        
+q.txt-610-   847                            rst = wlan_mgmt_scan_que_node_new(pnic_info, &pnew_node);
+q.txt-611-   848                            if (rst)
+q.txt-612-   849                            {
+q.txt-613-   850                                WLAN_MGMT_DBG("new node fail, error code: %d", rst);
+q.txt-614-   851                                break;
+q.txt-615-   852                            }
+q.txt-616-   853        
+q.txt-617-   854                            rst = wlan_mgmt_scan_node_info(pnic_info,
+q.txt-618-   855                                                           pfrm_msg, frm_msg_len,
+--
+q.txt-934-src/nic/adhoc.c-75-    if (zt_80211_hdr_type_get(pmgmt) != ZT_80211_FRM_BEACON)
+q.txt-935-src/nic/adhoc.c-76-    {
+q.txt-936-src/nic/adhoc.c-77-        return 0;
+q.txt-937-src/nic/adhoc.c-78-    }
+q.txt-938-src/nic/adhoc.c-79-
+q.txt-939-src/nic/adhoc.c-80-    ADHOC_DBG();
+q.txt-940-src/nic/adhoc.c-81-    if (zt_80211_mgmt_ies_search(pies, ies_len, ZT_80211_MGMT_EID_SSID, &pie))
+q.txt-941-src/nic/adhoc.c-82-    {
+q.txt-942-src/nic/adhoc.c-83-        return 0;
+q.txt-943---
+q.txt:944:src/nic/adhoc.c-247-zt_pt_ret_t zt_adhoc_prc_bcn(nic_info_st *pnic_info, zt_msg_t *pmsg,
+q.txt-945-src/nic/adhoc.c-248-                             wdn_net_info_st *pwdn_info)
+q.txt-946-src/nic/adhoc.c-249-{
+q.txt-947-src/nic/adhoc.c-250-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+q.txt-948-src/nic/adhoc.c-251-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+q.txt-949-src/nic/adhoc.c-252-    zt_80211_mgmt_t *pmgmt;
+q.txt-950-src/nic/adhoc.c-253-    zt_u16 var_len = 0, ofs;
+q.txt-951-src/nic/adhoc.c-254-    zt_u8 *pvar = NULL;
+q.txt-952-src/nic/adhoc.c:255:    zt_80211_mgmt_ie_t *pie;
+q.txt-953-src/nic/adhoc.c-256-    zt_u8 i, j;
+q.txt-954-src/nic/adhoc.c-257-    zt_80211_frame_e frame_type;
+q.txt-955-src/nic/adhoc.c-258-
+q.txt-956-src/nic/adhoc.c-259-    ADHOC_DBG();
+q.txt-957-src/nic/adhoc.c-260-    if (pmsg == NULL)
+q.txt-958-src/nic/adhoc.c-261-    {
+q.txt-959-src/nic/adhoc.c-262-
+q.txt-960-src/nic/adhoc.c-263-        ADHOC_WARN("MSG---IS---NULL-----");
+q.txt-961-src/nic/adhoc.c-264-        /* abort thread */
+q.txt-962-src/nic/adhoc.c-265-        return -1;
+q.txt-963-src/nic/adhoc.c-266-    }
+q.txt-964-src/nic/adhoc.c-267-
+q.txt-965---
+q.txt-966-src/nic/adhoc.c-285-    /* element variable fields */
+q.txt-967-src/nic/adhoc.c-286-    if (frame_type == ZT_80211_FRM_BEACON)
+q.txt-968-src/nic/adhoc.c-287-    {
+q.txt-969-src/nic/adhoc.c-288-        pvar = pmgmt->beacon.variable;
+q.txt-970-src/nic/adhoc.c-289-        var_len = pmsg->len - ZT_OFFSETOF(zt_80211_mgmt_t, beacon.variable);
+q.txt-971-src/nic/adhoc.c-290-    }
+q.txt-972-src/nic/adhoc.c-291-
+q.txt-973-src/nic/adhoc.c-292-    for (ofs = 0; ofs < var_len;
+q.txt-974-src/nic/adhoc.c:293:            ofs += ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len)
+q.txt-975-src/nic/adhoc.c-294-    {
+q.txt-976-src/nic/adhoc.c-295-        pie = (void *)&pvar[ofs];
+q.txt-977-src/nic/adhoc.c-296-
+q.txt-978-src/nic/adhoc.c-297-        if (pie->element_id == ZT_80211_MGMT_EID_SUPP_RATES)
+q.txt-979-src/nic/adhoc.c-298-        {
+--
+src/nic/adhoc.c-237-    zt_os_api_ind_disconnect(pnic_info, adhoc_info->framework);
+src/nic/adhoc.c-238-    zt_local_cfg_set_work_mode(pnic_info, network_type);
+src/nic/adhoc.c-239-    if (!pnic_info->is_surprise_removed)
+src/nic/adhoc.c-240-    {
+src/nic/adhoc.c-241-        zt_mcu_set_op_mode(pnic_info, network_type);
+src/nic/adhoc.c-242-    }
+src/nic/adhoc.c-243-
+src/nic/adhoc.c-244-    zt_set_adhoc_master(pnic_info, zt_false);
+src/nic/adhoc.c-245-}
+src/nic/adhoc.c-246-
+src/nic/adhoc.c:247:zt_pt_ret_t zt_adhoc_prc_bcn(nic_info_st *pnic_info, zt_msg_t *pmsg,
+src/nic/adhoc.c-248-                             wdn_net_info_st *pwdn_info)
+src/nic/adhoc.c-249-{
+src/nic/adhoc.c-250-    zt_wlan_mgmt_info_t *pwlan_info = pnic_info->wlan_mgmt_info;
+src/nic/adhoc.c-251-    zt_wlan_network_t *pcur_network = &pwlan_info->cur_network;
+src/nic/adhoc.c-252-    zt_80211_mgmt_t *pmgmt;
+src/nic/adhoc.c-253-    zt_u16 var_len = 0, ofs;
+src/nic/adhoc.c-254-    zt_u8 *pvar = NULL;
+src/nic/adhoc.c-255-    zt_80211_mgmt_ie_t *pie;
+src/nic/adhoc.c-256-    zt_u8 i, j;
+src/nic/adhoc.c-257-    zt_80211_frame_e frame_type;
+src/nic/adhoc.c-258-
+src/nic/adhoc.c-259-    ADHOC_DBG();
+src/nic/adhoc.c-260-    if (pmsg == NULL)
+src/nic/adhoc.c-261-    {
+src/nic/adhoc.c-262-
+src/nic/adhoc.c-263-        ADHOC_WARN("MSG---IS---NULL-----");
+src/nic/adhoc.c-264-        /* abort thread */
+src/nic/adhoc.c-265-        return -1;
+src/nic/adhoc.c-266-    }
+src/nic/adhoc.c-267-
+src/nic/adhoc.c-268-    pmgmt = (zt_80211_mgmt_t *)pmsg->value;
+src/nic/adhoc.c-269-    /* retrive frame type */
+src/nic/adhoc.c-270-    frame_type = zt_80211_hdr_type_get(pmgmt);
+src/nic/adhoc.c-271-
+src/nic/adhoc.c-272-    /* retrive element fiexd fields */
+src/nic/adhoc.c-273-    pwdn_info->cap_info = zt_le16_to_cpu(pmgmt->beacon.capab);
+src/nic/adhoc.c-274-    pwdn_info->bcn_interval = zt_le16_to_cpu(pmgmt->beacon.intv);
+src/nic/adhoc.c-275-
+src/nic/adhoc.c-276-    /* initilize */
+src/nic/adhoc.c-277-    // pwdn_info->rsn_pairwise_cipher = 0;
+src/nic/adhoc.c-278-    pwdn_info->wmm_enable = zt_false;
+src/nic/adhoc.c-279-    pwdn_info->wpa_enable = zt_false;
+src/nic/adhoc.c-280-    pwdn_info->rsn_enable = zt_false;
+src/nic/adhoc.c-281-    pwdn_info->datarate_len = 0;
+src/nic/adhoc.c-282-    pwdn_info->ext_datarate_len = 0;
+--
+src/nic/adhoc.c-827-    }
+src/nic/adhoc.c-828-
+src/nic/adhoc.c-829-    zt_timer_reset(&adhoc_info->timer);
+src/nic/adhoc.c-830-    return 0;
+src/nic/adhoc.c-831-}
+src/nic/adhoc.c-832-
+src/nic/adhoc.c-833-zt_s32 zt_adhoc_leave_ibss_msg_send(nic_info_st *pnic_info)
+src/nic/adhoc.c-834-{
+src/nic/adhoc.c-835-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/adhoc.c-836-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/adhoc.c:837:    zt_msg_t *pmsg;
+src/nic/adhoc.c-838-    zt_s32 rst;
+src/nic/adhoc.c-839-
+src/nic/adhoc.c-840-    if (pnic_info == NULL)
+src/nic/adhoc.c-841-    {
+src/nic/adhoc.c-842-        return -1;
+src/nic/adhoc.c-843-    }
+src/nic/adhoc.c-844-
+src/nic/adhoc.c-845-    ADHOC_DBG();
+src/nic/adhoc.c-846-
+src/nic/adhoc.c-847-    if (!pnic_info->is_up)
+src/nic/adhoc.c-848-    {
+src/nic/adhoc.c-849-        return -2;
+src/nic/adhoc.c-850-    }
+src/nic/adhoc.c-851-
+src/nic/adhoc.c-852-    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, &pmsg);
+src/nic/adhoc.c-853-    if (rst)
+src/nic/adhoc.c-854-    {
+src/nic/adhoc.c-855-        ADHOC_WARN("msg new fail error fail: %d", rst);
+src/nic/adhoc.c-856-        return -4;
+src/nic/adhoc.c-857-    }
+src/nic/adhoc.c-858-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/adhoc.c-859-    if (rst)
+src/nic/adhoc.c-860-    {
+src/nic/adhoc.c-861-        zt_msg_del(pmsg_que, pmsg);
+src/nic/adhoc.c-862-        ADHOC_WARN("msg push fail error fail: %d", rst);
+src/nic/adhoc.c-863-        return -5;
+src/nic/adhoc.c-864-    }
+src/nic/adhoc.c-865-
+src/nic/adhoc.c-866-    return 0;
+src/nic/adhoc.c-867-}
+src/nic/adhoc.c-868-
+src/nic/adhoc.c-869-zt_s32 zt_adhoc_bcn_msg_send(nic_info_st *pnic_info, zt_80211_mgmt_t *pmgmt,
+src/nic/adhoc.c-870-                             zt_u16 mgmt_len)
+src/nic/adhoc.c-871-{
+src/nic/adhoc.c-872-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+--
+src/nic/adhoc.c-879-    if (!pnic_info->is_up)
+src/nic/adhoc.c-880-    {
+src/nic/adhoc.c-881-        return -2;
+src/nic/adhoc.c-882-    }
+src/nic/adhoc.c-883-
+src/nic/adhoc.c-884-    ADHOC_DBG();
+src/nic/adhoc.c-885-
+src/nic/adhoc.c-886-    /* new message information */
+src/nic/adhoc.c-887-    {
+src/nic/adhoc.c-888-        zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/adhoc.c:889:        zt_msg_t *pmsg;
+src/nic/adhoc.c-890-        zt_s32 rst;
+src/nic/adhoc.c-891-
+src/nic/adhoc.c-892-        rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
+src/nic/adhoc.c-893-        if (rst)
+src/nic/adhoc.c-894-        {
+src/nic/adhoc.c-895-            ADHOC_WARN("msg new fail error fail: %d", rst);
+src/nic/adhoc.c-896-            return -3;
+src/nic/adhoc.c-897-        }
+src/nic/adhoc.c-898-        pmsg->len = mgmt_len;
+src/nic/adhoc.c-899-        zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+src/nic/adhoc.c-900-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/adhoc.c-901-        if (rst)
+src/nic/adhoc.c-902-        {
+src/nic/adhoc.c-903-            ADHOC_WARN("msg push fail error fail: %d", rst);
+src/nic/adhoc.c-904-            return -4;
+src/nic/adhoc.c-905-        }
+src/nic/adhoc.c-906-    }
+src/nic/adhoc.c-907-
+src/nic/adhoc.c-908-    return 0;
+src/nic/adhoc.c-909-}
+src/nic/adhoc.c-910-
+src/nic/adhoc.c-911-zt_s32 zt_adhoc_init(nic_info_st *pnic_info)
+src/nic/adhoc.c-912-{
+src/nic/adhoc.c-913-    zt_adhoc_info_t *adhoc_info;
+src/nic/adhoc.c-914-
+src/nic/adhoc.c-915-    if (pnic_info == NULL)
+src/nic/adhoc.c-916-    {
+src/nic/adhoc.c-917-        return -1;
+src/nic/adhoc.c-918-    }
+src/nic/adhoc.c-919-
+src/nic/adhoc.c-920-    ADHOC_DBG();
+src/nic/adhoc.c-921-    adhoc_info = zt_kzalloc(sizeof(zt_adhoc_info_t));
+src/nic/adhoc.c-922-
+src/nic/adhoc.c-923-    if (adhoc_info == NULL)
+src/nic/adhoc.c-924-    {
+--
+src/nic/adhoc.h-31-
+src/nic/adhoc.h-32-typedef zt_u8 beacon_frame_t[ZT_80211_MGMT_BEACON_SIZE_MAX];
+src/nic/adhoc.h-33-
+src/nic/adhoc.h-34-
+src/nic/adhoc.h-35-zt_bool zt_get_adhoc_master(nic_info_st *pnic_info);
+src/nic/adhoc.h-36-zt_bool zt_set_adhoc_master(nic_info_st *pnic_info, zt_bool status);
+src/nic/adhoc.h-37-zt_s32 zt_adhoc_work(nic_info_st *pnic_info, zt_80211_mgmt_t *pmgmt,
+src/nic/adhoc.h-38-                     zt_u16 mgmt_len);
+src/nic/adhoc.h-39-zt_pt_ret_t adhoc_thrd(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info);
+src/nic/adhoc.h-40-
+src/nic/adhoc.h:41:zt_pt_ret_t zt_adhoc_prc_bcn(nic_info_st *pnic_info, zt_msg_t *pmsg,
+src/nic/adhoc.h-42-                             wdn_net_info_st *pwdn_info);
+src/nic/adhoc.h-43-void zt_adhoc_wdn_info_update(nic_info_st *pnic_info,
+src/nic/adhoc.h-44-                              wdn_net_info_st *pwdn_info);
+src/nic/adhoc.h-45-void zt_adhoc_flush_wdn(nic_info_st *pnic_info);
+src/nic/adhoc.h-46-void zt_adhoc_flush_all_resource(nic_info_st *pnic_info,
+src/nic/adhoc.h-47-                                 sys_work_mode_e network_type);
+src/nic/adhoc.h-48-zt_s32 zt_adhoc_do_probrsp(nic_info_st *pnic_info,
+src/nic/adhoc.h-49-                           zt_80211_mgmt_t *pframe, zt_u16 frame_len);
+src/nic/adhoc.h-50-zt_s32 zt_adhoc_new_boradcast_wdn(nic_info_st *pnic_info);
+src/nic/adhoc.h-51-zt_s32 zt_adhoc_ibss_join(nic_info_st *pnic_info, zt_u8 framework,
+src/nic/adhoc.h-52-                          zt_s32 reason);
+src/nic/adhoc.h-53-zt_s32 zt_adhoc_send_beacon(nic_info_st *pnic_info);
+src/nic/adhoc.h-54-zt_s32 zt_adhoc_keepalive_thrd(nic_info_st *pnic_info);
+src/nic/adhoc.h-55-zt_s32 zt_adhoc_leave_ibss_msg_send(nic_info_st *pnic_info);
+src/nic/adhoc.h-56-zt_s32 zt_adhoc_term(nic_info_st *pnic_info);
+src/nic/adhoc.h-57-zt_s32 zt_adhoc_init(nic_info_st *pnic_info);
+src/nic/adhoc.h-58-
+src/nic/adhoc.h-59-#endif
+src/nic/adhoc.h-60-#endif
+--
+src/nic/assoc.c-1004-    if (mgmt_len > sizeof(assoc_rsp_t))
+src/nic/assoc.c-1005-    {
+src/nic/assoc.c-1006-        ASSOC_WARN("mgmt_len:%d", mgmt_len);
+src/nic/assoc.c-1007-        return -5;
+src/nic/assoc.c-1008-    }
+src/nic/assoc.c-1009-
+src/nic/assoc.c-1010-    /* send message */
+src/nic/assoc.c-1011-    {
+src/nic/assoc.c-1012-        assoc_info_t *passoc_info = pnic_info->assoc_info;
+src/nic/assoc.c-1013-        zt_msg_que_t *pmsg_que = &passoc_info->msg_que;
+src/nic/assoc.c:1014:        zt_msg_t *pmsg;
+src/nic/assoc.c-1015-        zt_s32 rst;
+src/nic/assoc.c-1016-
+src/nic/assoc.c-1017-        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_RSP, &pmsg);
+src/nic/assoc.c-1018-        if (rst)
+src/nic/assoc.c-1019-        {
+src/nic/assoc.c-1020-            ASSOC_WARN("msg new fail error fail: %d", rst);
+src/nic/assoc.c-1021-            return -6;
+src/nic/assoc.c-1022-        }
+src/nic/assoc.c-1023-        pmsg->len = mgmt_len;
+src/nic/assoc.c-1024-        zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+src/nic/assoc.c-1025-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c-1026-        if (rst)
+src/nic/assoc.c-1027-        {
+src/nic/assoc.c-1028-            zt_msg_del(pmsg_que, pmsg);
+src/nic/assoc.c-1029-            ASSOC_WARN("msg push fail error fail: %d", rst);
+src/nic/assoc.c-1030-            return -7;
+src/nic/assoc.c-1031-        }
+src/nic/assoc.c-1032-    }
+src/nic/assoc.c-1033-
+src/nic/assoc.c-1034-    return 0;
+src/nic/assoc.c-1035-}
+src/nic/assoc.c-1036-
+src/nic/assoc.c-1037-zt_s32 zt_disassoc_frame_parse(nic_info_st *pnic_info,
+src/nic/assoc.c-1038-                               wdn_net_info_st *pwdn_info,
+src/nic/assoc.c-1039-                               zt_80211_mgmt_t *pmgmt, zt_u16 mgmt_len)
+src/nic/assoc.c-1040-{
+src/nic/assoc.c-1041-    zt_s32 rst;
+src/nic/assoc.c-1042-
+src/nic/assoc.c-1043-    switch (zt_local_cfg_get_work_mode(pnic_info))
+src/nic/assoc.c-1044-    {
+src/nic/assoc.c-1045-        case ZT_INFRA_MODE :
+src/nic/assoc.c-1046-            if (pwdn_info)
+src/nic/assoc.c-1047-            {
+src/nic/assoc.c-1048-                ASSOC_DBG("ZT_80211_FRM_DISASSOC[%d] frame get, reason:%d",
+src/nic/assoc.c-1049-                          pnic_info->ndev_id, pmgmt->disassoc.reason_code);
+--
+src/nic/assoc.c-1076-            return -3;
+src/nic/assoc.c-1077-    }
+src/nic/assoc.c-1078-
+src/nic/assoc.c-1079-    return 0;
+src/nic/assoc.c-1080-}
+src/nic/assoc.c-1081-
+src/nic/assoc.c-1082-zt_pt_ret_t zt_assoc_sta_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/assoc.c-1083-{
+src/nic/assoc.c-1084-    assoc_info_t *passoc_info;
+src/nic/assoc.c-1085-    zt_msg_que_t *pmsg_que;
+src/nic/assoc.c:1086:    zt_msg_t *pmsg = NULL;
+src/nic/assoc.c-1087-    zt_s32 reason = ZT_ASSOC_TAG_DONE;
+src/nic/assoc.c-1088-    zt_s32 rst;
+src/nic/assoc.c-1089-
+src/nic/assoc.c-1090-    if (pt == NULL || pnic_info == NULL || prsn == NULL)
+src/nic/assoc.c-1091-    {
+src/nic/assoc.c-1092-        PT_EXIT(pt);
+src/nic/assoc.c-1093-    }
+src/nic/assoc.c-1094-    passoc_info = pnic_info->assoc_info;
+src/nic/assoc.c-1095-    pmsg_que = &passoc_info->msg_que;
+src/nic/assoc.c-1096-
+src/nic/assoc.c-1097-    PT_BEGIN(pt);
+src/nic/assoc.c-1098-
+src/nic/assoc.c-1099-    PT_WAIT_WHILE(pt, nic_mlme_hw_access_trylock(pnic_info));
+src/nic/assoc.c-1100-    /* get assoc start message. */
+src/nic/assoc.c-1101-    do
+src/nic/assoc.c-1102-    {
+src/nic/assoc.c-1103-        if (zt_msg_pop(pmsg_que, &pmsg))
+src/nic/assoc.c-1104-        {
+src/nic/assoc.c-1105-            /* no message */
+src/nic/assoc.c-1106-            ASSOC_WARN("no request message");
+src/nic/assoc.c-1107-            nic_mlme_hw_access_unlock(pnic_info);
+src/nic/assoc.c-1108-            *prsn = -1;
+src/nic/assoc.c-1109-            PT_EXIT(pt);
+src/nic/assoc.c-1110-        }
+src/nic/assoc.c-1111-        if (pmsg->tag != ZT_ASSOC_TAG_START)
+src/nic/assoc.c-1112-        {
+src/nic/assoc.c-1113-            /* undesired message */
+src/nic/assoc.c-1114-            ASSOC_DBG("unsuited message, tag: %d", pmsg->tag);
+src/nic/assoc.c-1115-            zt_msg_del(pmsg_que, pmsg);
+src/nic/assoc.c-1116-            PT_YIELD(pt);
+src/nic/assoc.c-1117-            continue;
+src/nic/assoc.c-1118-        }
+src/nic/assoc.c-1119-        zt_msg_del(pmsg_que, pmsg);
+src/nic/assoc.c-1120-        break;
+src/nic/assoc.c-1121-    } while (zt_true);
+--
+src/nic/assoc.c-1216-    {
+src/nic/assoc.c-1217-        return -2;
+src/nic/assoc.c-1218-    }
+src/nic/assoc.c-1219-    passoc_info = pnic_info->assoc_info;
+src/nic/assoc.c-1220-
+src/nic/assoc.c-1221-    ASSOC_DBG();
+src/nic/assoc.c-1222-
+src/nic/assoc.c-1223-    /* new message information */
+src/nic/assoc.c-1224-    {
+src/nic/assoc.c-1225-        zt_msg_que_t *pmsg_que = &passoc_info->msg_que;
+src/nic/assoc.c:1226:        zt_msg_t *pmsg;
+src/nic/assoc.c-1227-        zt_s32 rst;
+src/nic/assoc.c-1228-
+src/nic/assoc.c-1229-        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_START, &pmsg);
+src/nic/assoc.c-1230-        if (rst)
+src/nic/assoc.c-1231-        {
+src/nic/assoc.c-1232-            ASSOC_WARN("msg new fail error fail: %d", rst);
+src/nic/assoc.c-1233-            return -3;
+src/nic/assoc.c-1234-        }
+src/nic/assoc.c-1235-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c-1236-        if (rst)
+src/nic/assoc.c-1237-        {
+src/nic/assoc.c-1238-            ASSOC_WARN("msg push fail error fail: %d", rst);
+src/nic/assoc.c-1239-            return -4;
+src/nic/assoc.c-1240-        }
+src/nic/assoc.c-1241-    }
+src/nic/assoc.c-1242-
+src/nic/assoc.c-1243-    return 0;
+src/nic/assoc.c-1244-}
+src/nic/assoc.c-1245-
+src/nic/assoc.c-1246-zt_s32 zt_assoc_stop(nic_info_st *pnic_info)
+src/nic/assoc.c-1247-{
+src/nic/assoc.c-1248-    assoc_info_t *passoc_info;
+src/nic/assoc.c-1249-
+src/nic/assoc.c-1250-    if (pnic_info == NULL || ZT_CANNOT_RUN(pnic_info))
+src/nic/assoc.c-1251-    {
+src/nic/assoc.c-1252-        return -1;
+src/nic/assoc.c-1253-    }
+src/nic/assoc.c-1254-
+src/nic/assoc.c-1255-    ASSOC_DBG();
+src/nic/assoc.c-1256-
+src/nic/assoc.c-1257-    if (!pnic_info->is_up)
+src/nic/assoc.c-1258-    {
+src/nic/assoc.c-1259-        return -2;
+src/nic/assoc.c-1260-    }
+src/nic/assoc.c-1261-
+src/nic/assoc.c-1262-    passoc_info = pnic_info->assoc_info;
+src/nic/assoc.c-1263-    if (!passoc_info->brun)
+src/nic/assoc.c-1264-    {
+src/nic/assoc.c-1265-        return -3;
+src/nic/assoc.c-1266-    }
+src/nic/assoc.c-1267-
+src/nic/assoc.c-1268-    {
+src/nic/assoc.c-1269-        zt_msg_que_t *pmsg_que = &passoc_info->msg_que;
+src/nic/assoc.c:1270:        zt_msg_t *pmsg;
+src/nic/assoc.c-1271-        zt_s32 rst;
+src/nic/assoc.c-1272-
+src/nic/assoc.c-1273-        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_ABORT, &pmsg);
+src/nic/assoc.c-1274-        if (rst)
+src/nic/assoc.c-1275-        {
+src/nic/assoc.c-1276-            ASSOC_WARN("msg new fail error fail: %d", rst);
+src/nic/assoc.c-1277-            return -4;
+src/nic/assoc.c-1278-        }
+src/nic/assoc.c-1279-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c-1280-        if (rst)
+src/nic/assoc.c-1281-        {
+src/nic/assoc.c-1282-            zt_msg_del(pmsg_que, pmsg);
+src/nic/assoc.c-1283-            ASSOC_WARN("msg push fail error fail: %d", rst);
+src/nic/assoc.c-1284-            return -5;
+src/nic/assoc.c-1285-        }
+src/nic/assoc.c-1286-    }
+src/nic/assoc.c-1287-
+src/nic/assoc.c-1288-    return 0;
+src/nic/assoc.c-1289-}
+src/nic/assoc.c-1290-
+src/nic/assoc.c-1291-zt_inline static zt_s32 assoc_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/assoc.c-1292-{
+src/nic/assoc.c-1293-    zt_msg_init(pmsg_que);
+src/nic/assoc.c-1294-    return (zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_RSP, sizeof(assoc_rsp_t), 2) ||
+src/nic/assoc.c-1295-            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_ABORT, 0, 1) ||
+src/nic/assoc.c-1296-            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_START, 0, 1)) ? -1 : 0;
+src/nic/assoc.c-1297-}
+src/nic/assoc.c-1298-
+src/nic/assoc.c-1299-zt_inline static void assoc_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/assoc.c-1300-{
+src/nic/assoc.c-1301-    zt_msg_deinit(pmsg_que);
+src/nic/assoc.c-1302-}
+src/nic/assoc.c-1303-
+src/nic/assoc.c-1304-zt_s32 zt_assoc_init(nic_info_st *pnic_info)
+src/nic/assoc.c-1305-{
+--
+src/nic/auth.c-465-
+src/nic/auth.c-466-    return 0;
+src/nic/auth.c-467-}
+src/nic/auth.c-468-#endif
+src/nic/auth.c-469-
+src/nic/auth.c-470-zt_pt_ret_t zt_auth_sta_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/auth.c-471-{
+src/nic/auth.c-472-    auth_info_t *pauth_info;
+src/nic/auth.c-473-    wdn_net_info_st *pwdn_info;
+src/nic/auth.c-474-    zt_msg_que_t *pmsg_que;
+src/nic/auth.c:475:    zt_msg_t *pmsg;
+src/nic/auth.c-476-    zt_80211_mgmt_t *pmgmt = NULL;
+src/nic/auth.c-477-    zt_u16 mgmt_len = 0;
+src/nic/auth.c-478-    struct auth_ie *pauth_ie = NULL;
+src/nic/auth.c-479-    zt_s32 reason;
+src/nic/auth.c-480-    zt_s32 rst;
+src/nic/auth.c-481-
+src/nic/auth.c-482-    if (pt == NULL || pnic_info == NULL || prsn == NULL)
+src/nic/auth.c-483-    {
+src/nic/auth.c-484-        PT_EXIT(pt);
+src/nic/auth.c-485-    }
+src/nic/auth.c-486-    pauth_info = pnic_info->auth_info;
+src/nic/auth.c-487-    pmsg_que = &pauth_info->msg_que;
+src/nic/auth.c-488-    pwdn_info = pauth_info->pwdn_info;
+src/nic/auth.c-489-
+src/nic/auth.c-490-    PT_BEGIN(pt);
+src/nic/auth.c-491-
+src/nic/auth.c-492-    AUTH_DBG();
+src/nic/auth.c-493-
+src/nic/auth.c-494-    PT_WAIT_WHILE(pt, nic_mlme_hw_access_trylock(pnic_info));
+src/nic/auth.c-495-    do
+src/nic/auth.c-496-    {
+src/nic/auth.c-497-        /* get auth start message. */
+src/nic/auth.c-498-        if (zt_msg_pop(pmsg_que, &pmsg))
+src/nic/auth.c-499-        {
+src/nic/auth.c-500-            /* no message */
+src/nic/auth.c-501-            AUTH_WARN("no request message");
+src/nic/auth.c-502-            nic_mlme_hw_access_unlock(pnic_info);
+src/nic/auth.c-503-            *prsn = -1;
+src/nic/auth.c-504-            PT_EXIT(pt);
+src/nic/auth.c-505-        }
+src/nic/auth.c-506-        if (pmsg->tag != ZT_AUTH_TAG_START)
+src/nic/auth.c-507-        {
+src/nic/auth.c-508-            /* undesired message */
+src/nic/auth.c-509-            AUTH_DBG("undesired message");
+src/nic/auth.c-510-            zt_msg_del(pmsg_que, pmsg);
+--
+src/nic/auth.c-757-
+src/nic/auth.c-758-    if (!pnic_info->is_up)
+src/nic/auth.c-759-    {
+src/nic/auth.c-760-        return -2;
+src/nic/auth.c-761-    }
+src/nic/auth.c-762-    pauth_info = pnic_info->auth_info;
+src/nic/auth.c-763-
+src/nic/auth.c-764-    /* send message */
+src/nic/auth.c-765-    {
+src/nic/auth.c-766-        zt_msg_que_t *pmsg_que = &pauth_info->msg_que;
+src/nic/auth.c:767:        zt_msg_t *pmsg;
+src/nic/auth.c-768-        zt_s32 rst;
+src/nic/auth.c-769-
+src/nic/auth.c-770-        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_START, &pmsg);
+src/nic/auth.c-771-        if (rst)
+src/nic/auth.c-772-        {
+src/nic/auth.c-773-            AUTH_WARN("msg new fail error fail: %d", rst);
+src/nic/auth.c-774-            return -3;
+src/nic/auth.c-775-        }
+src/nic/auth.c-776-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c-777-        if (rst)
+src/nic/auth.c-778-        {
+src/nic/auth.c-779-            zt_msg_del(pmsg_que, pmsg);
+src/nic/auth.c-780-            AUTH_WARN("msg push fail error fail: %d", rst);
+src/nic/auth.c-781-            return -4;
+src/nic/auth.c-782-        }
+src/nic/auth.c-783-    }
+src/nic/auth.c-784-
+src/nic/auth.c-785-    return 0;
+src/nic/auth.c-786-}
+src/nic/auth.c-787-
+src/nic/auth.c-788-zt_s32 zt_auth_sta_stop(nic_info_st *pnic_info)
+src/nic/auth.c-789-{
+src/nic/auth.c-790-    auth_info_t *pauth_info;
+src/nic/auth.c-791-
+src/nic/auth.c-792-    if (pnic_info == NULL || ZT_CANNOT_RUN(pnic_info))
+src/nic/auth.c-793-    {
+src/nic/auth.c-794-        return -1;
+src/nic/auth.c-795-    }
+src/nic/auth.c-796-
+src/nic/auth.c-797-    AUTH_DBG();
+src/nic/auth.c-798-
+src/nic/auth.c-799-    pauth_info = pnic_info->auth_info;
+src/nic/auth.c-800-    if (!pauth_info->brun)
+src/nic/auth.c-801-    {
+src/nic/auth.c-802-        return -2;
+src/nic/auth.c-803-    }
+src/nic/auth.c-804-
+src/nic/auth.c-805-    /* send message */
+src/nic/auth.c-806-    {
+src/nic/auth.c-807-        zt_msg_que_t *pmsg_que = &pauth_info->msg_que;
+src/nic/auth.c:808:        zt_msg_t *pmsg;
+src/nic/auth.c-809-        zt_s32 rst;
+src/nic/auth.c-810-
+src/nic/auth.c-811-        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_ABORT, &pmsg);
+src/nic/auth.c-812-        if (rst)
+src/nic/auth.c-813-        {
+src/nic/auth.c-814-            AUTH_WARN("msg new fail, error code: %d", rst);
+src/nic/auth.c-815-            return -3;
+src/nic/auth.c-816-        }
+src/nic/auth.c-817-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c-818-        if (rst)
+src/nic/auth.c-819-        {
+src/nic/auth.c-820-            zt_msg_del(pmsg_que, pmsg);
+src/nic/auth.c-821-            AUTH_WARN("msg push fail, error code: %d", rst);
+src/nic/auth.c-822-            return -4;
+src/nic/auth.c-823-        }
+src/nic/auth.c-824-    }
+src/nic/auth.c-825-
+src/nic/auth.c-826-    return 0;
+src/nic/auth.c-827-}
+src/nic/auth.c-828-
+src/nic/auth.c-829-zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
+src/nic/auth.c-830-                     zt_80211_mgmt_t *pmgmt, zt_u16 mgmt_len)
+src/nic/auth.c-831-{
+src/nic/auth.c-832-    if (pnic_info == NULL || pmgmt == NULL || mgmt_len == 0)
+src/nic/auth.c-833-    {
+src/nic/auth.c-834-        AUTH_WARN("None pointer");
+src/nic/auth.c-835-        return -1;
+src/nic/auth.c-836-    }
+src/nic/auth.c-837-
+src/nic/auth.c-838-    if (pwdn_info == NULL)
+src/nic/auth.c-839-    {
+src/nic/auth.c-840-        AUTH_ERROR("pwdn_info None pointer");
+src/nic/auth.c-841-        return -2;
+src/nic/auth.c-842-    }
+src/nic/auth.c-843-
+--
+src/nic/auth.c-861-    if (mgmt_len > sizeof(auth_rsp_t))
+src/nic/auth.c-862-    {
+src/nic/auth.c-863-        AUTH_DBG("auth frame length over limite");
+src/nic/auth.c-864-        return -5;
+src/nic/auth.c-865-    }
+src/nic/auth.c-866-
+src/nic/auth.c-867-    /* send message */
+src/nic/auth.c-868-    {
+src/nic/auth.c-869-        auth_info_t *pauth_info = pnic_info->auth_info;
+src/nic/auth.c-870-        zt_msg_que_t *pmsg_que = &pauth_info->msg_que;
+src/nic/auth.c:871:        zt_msg_t *pmsg;
+src/nic/auth.c-872-        zt_s32 rst;
+src/nic/auth.c-873-
+src/nic/auth.c-874-        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_RSP, &pmsg);
+src/nic/auth.c-875-        if (rst)
+src/nic/auth.c-876-        {
+src/nic/auth.c-877-            AUTH_DBG("new msg fail, error code: %d", rst);
+src/nic/auth.c-878-            return -6;
+src/nic/auth.c-879-        }
+src/nic/auth.c-880-        pmsg->len = mgmt_len;
+src/nic/auth.c-881-        zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+src/nic/auth.c-882-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/auth.c-883-        if (rst)
+src/nic/auth.c-884-        {
+src/nic/auth.c-885-            zt_msg_del(pmsg_que, pmsg);
+src/nic/auth.c-886-            AUTH_DBG("push msg fail, error code: %d", rst);
+src/nic/auth.c-887-            return -7;
+src/nic/auth.c-888-        }
+src/nic/auth.c-889-    }
+src/nic/auth.c-890-
+src/nic/auth.c-891-    return 0;
+src/nic/auth.c-892-}
+src/nic/auth.c-893-
+src/nic/auth.c-894-zt_s32 zt_auth_frame_parse(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
+src/nic/auth.c-895-                           zt_80211_mgmt_t *pmgmt, zt_u16 mgmt_len)
+src/nic/auth.c-896-{
+src/nic/auth.c-897-    zt_s32 rst;
+src/nic/auth.c-898-
+src/nic/auth.c-899-    switch (zt_local_cfg_get_work_mode(pnic_info))
+src/nic/auth.c-900-    {
+src/nic/auth.c-901-        case ZT_INFRA_MODE :
+src/nic/auth.c-902-            rst = auth_sta_recv(pnic_info, pwdn_info, pmgmt, mgmt_len);
+src/nic/auth.c-903-            if (rst)
+src/nic/auth.c-904-            {
+src/nic/auth.c-905-                AUTH_DBG("auth_sta_recv fail, error code: %d", rst);
+src/nic/auth.c-906-                return -1;
+--
+src/nic/lps.c-738-        {
+src/nic/lps.c-739-            LPS_WARN(" fail: lps_set_rsvd_page_loc");
+src/nic/lps.c-740-        }
+src/nic/lps.c-741-    }
+src/nic/lps.c-742-}
+src/nic/lps.c-743-
+src/nic/lps.c-744-static zt_s32 zt_lps_start(nic_info_st *pnic_info, zt_u8 lps_ctrl_type)
+src/nic/lps.c-745-{
+src/nic/lps.c-746-    mlme_info_t *pmlme_info;
+src/nic/lps.c-747-    zt_msg_que_t *pmsg_que;
+src/nic/lps.c:748:    zt_msg_t *pmsg;
+src/nic/lps.c-749-    mlme_lps_t *param;
+src/nic/lps.c-750-    zt_s32 rst;
+src/nic/lps.c-751-
+src/nic/lps.c-752-    LPS_DBG();
+src/nic/lps.c-753-
+src/nic/lps.c-754-    if (pnic_info == NULL)
+src/nic/lps.c-755-    {
+src/nic/lps.c-756-        return -1;
+src/nic/lps.c-757-    }
+src/nic/lps.c-758-
+src/nic/lps.c-759-    if (!pnic_info->is_up)
+src/nic/lps.c-760-    {
+src/nic/lps.c-761-        LPS_WARN("ndev down");
+src/nic/lps.c-762-        return -2;
+src/nic/lps.c-763-    }
+src/nic/lps.c-764-
+src/nic/lps.c-765-    pmlme_info = pnic_info->mlme_info;
+src/nic/lps.c-766-    pmsg_que = &pmlme_info->msg_que;
+src/nic/lps.c-767-
+src/nic/lps.c-768-    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_LPS, &pmsg);
+src/nic/lps.c-769-    if (rst)
+src/nic/lps.c-770-    {
+src/nic/lps.c-771-        LPS_WARN("msg new fail error code: %d", rst);
+src/nic/lps.c-772-        return -3;
+src/nic/lps.c-773-    }
+src/nic/lps.c-774-    param = (mlme_lps_t *)pmsg->value;
+src/nic/lps.c-775-
+src/nic/lps.c-776-    param->lps_ctrl_type = lps_ctrl_type;
+src/nic/lps.c-777-
+src/nic/lps.c-778-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/lps.c-779-    if (rst)
+src/nic/lps.c-780-    {
+src/nic/lps.c-781-        zt_msg_del(pmsg_que, pmsg);
+src/nic/lps.c-782-        LPS_WARN("msg push fail error code: %d", rst);
+src/nic/lps.c-783-        return -4;
+--
+src/nic/mlme.c-50-typedef struct
+src/nic/mlme.c-51-{
+src/nic/mlme.c-52-    zt_mlme_framework_e framework;
+src/nic/mlme.c-53-    zt_wlan_ssid_t ssid;
+src/nic/mlme.c-54-    zt_u8 ch;
+src/nic/mlme.c-55-} mlme_conn_ibss_t;
+src/nic/mlme.c-56-#endif
+src/nic/mlme.c-57-
+src/nic/mlme.c-58-/* function declaration */
+src/nic/mlme.c-59-static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
+src/nic/mlme.c:60:                            zt_msg_tag_t tag, void *value, zt_u8 len);
+src/nic/mlme.c-61-static zt_s32 mlme_set_state(nic_info_st *pnic_info, mlme_state_e state);
+src/nic/mlme.c-62-zt_s32 mlme_set_connect(nic_info_st *pnic_info, zt_bool bconnect);
+src/nic/mlme.c-63-
+src/nic/mlme.c-64-zt_inline static
+src/nic/mlme.c-65-zt_s32 hw_cfg(nic_info_st *pnic_info, wdn_net_info_st *wdn_info)
+src/nic/mlme.c-66-{
+src/nic/mlme.c-67-    zt_s32 ret = 0;
+src/nic/mlme.c-68-    zt_u16 basic_dr_cfg = 0;
+src/nic/mlme.c-69-
+src/nic/mlme.c-70-    /* hardware configure */
+src/nic/mlme.c-71-    if (wdn_info->short_preamble)
+src/nic/mlme.c-72-    {
+src/nic/mlme.c-73-        ret |= zt_mcu_set_preamble(pnic_info, PREAMBLE_SHORT);
+src/nic/mlme.c-74-    }
+src/nic/mlme.c-75-    else
+src/nic/mlme.c-76-    {
+src/nic/mlme.c-77-        ret |= zt_mcu_set_preamble(pnic_info, PREAMBLE_LONG);
+src/nic/mlme.c-78-    }
+src/nic/mlme.c-79-
+src/nic/mlme.c-80-    if (wdn_info->short_slot)
+src/nic/mlme.c-81-    {
+src/nic/mlme.c-82-        ret |= zt_mcu_set_slot_time(pnic_info, SHORT_SLOT_TIME);
+src/nic/mlme.c-83-    }
+src/nic/mlme.c-84-    else
+src/nic/mlme.c-85-    {
+src/nic/mlme.c-86-        ret |= zt_mcu_set_slot_time(pnic_info, NON_SHORT_SLOT_TIME);
+src/nic/mlme.c-87-    }
+src/nic/mlme.c-88-
+src/nic/mlme.c-89-    if (wdn_info->wmm_enable)
+src/nic/mlme.c-90-    {
+src/nic/mlme.c-91-        ret |= zt_mcu_set_wmm_para_enable(pnic_info, wdn_info);
+src/nic/mlme.c-92-    }
+src/nic/mlme.c-93-    else
+src/nic/mlme.c-94-    {
+src/nic/mlme.c-95-        ret |= zt_mcu_set_wmm_para_disable(pnic_info, wdn_info);
+--
+src/nic/mlme.c-144-    return 0;
+src/nic/mlme.c-145-}
+src/nic/mlme.c-146-
+src/nic/mlme.c-147-static
+src/nic/mlme.c-148-zt_pt_ret_t core_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-149-                           mlme_scan_t *preq, zt_s32 *prsn)
+src/nic/mlme.c-150-{
+src/nic/mlme.c-151-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-152-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-153-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:154:    zt_msg_t *pmsg;
+src/nic/mlme.c-155-    zt_s32 rst;
+src/nic/mlme.c-156-
+src/nic/mlme.c-157-    PT_BEGIN(pt);
+src/nic/mlme.c-158-
+src/nic/mlme.c-159-    MLME_DBG();
+src/nic/mlme.c-160-
+src/nic/mlme.c-161-    if (preq == NULL)
+src/nic/mlme.c-162-    {
+src/nic/mlme.c-163-        MLME_WARN("invalid scan request");
+src/nic/mlme.c-164-        *prsn = -1;
+src/nic/mlme.c-165-        PT_EXIT(pt);
+src/nic/mlme.c-166-    }
+src/nic/mlme.c-167-
+src/nic/mlme.c-168-    if (preq->type == SCAN_TYPE_PASSIVE)
+src/nic/mlme.c-169-    {
+src/nic/mlme.c-170-        zt_wlan_mgmt_scan_que_flush(pnic_info);
+src/nic/mlme.c-171-    }
+src/nic/mlme.c-172-
+src/nic/mlme.c-173-    /* start scan */
+src/nic/mlme.c-174-    rst = zt_scan_start(pnic_info, preq->type,
+src/nic/mlme.c-175-                        NULL,
+src/nic/mlme.c-176-                        preq->ssids, preq->ssid_num,
+src/nic/mlme.c-177-                        preq->chs, preq->ch_num);
+src/nic/mlme.c-178-    if (rst)
+src/nic/mlme.c-179-    {
+src/nic/mlme.c-180-        MLME_WARN("start fail, error code: %d", rst);
+src/nic/mlme.c-181-        *prsn = -2;
+src/nic/mlme.c-182-        PT_EXIT(pt);
+src/nic/mlme.c-183-    }
+src/nic/mlme.c-184-
+src/nic/mlme.c-185-    /* scan process */
+src/nic/mlme.c-186-    MLME_INFO("scan...");
+src/nic/mlme.c-187-    PT_INIT(pt_sub);
+src/nic/mlme.c-188-    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, prsn)))
+src/nic/mlme.c-189-    {
+--
+src/nic/mlme.c-295-    return 0;
+src/nic/mlme.c-296-}
+src/nic/mlme.c-297-
+src/nic/mlme.c-298-static
+src/nic/mlme.c-299-zt_pt_ret_t core_conn_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-300-                                mlme_conn_t *preq, zt_s32 *prsn)
+src/nic/mlme.c-301-{
+src/nic/mlme.c-302-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-303-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-304-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:305:    zt_msg_t *pmsg = NULL;
+src/nic/mlme.c-306-    zt_s32 rst;
+src/nic/mlme.c-307-    zt_80211_mgmt_t *pmgmt;
+src/nic/mlme.c-308-    zt_u16 mgmt_len;
+src/nic/mlme.c-309-
+src/nic/mlme.c-310-    PT_BEGIN(pt);
+src/nic/mlme.c-311-
+src/nic/mlme.c-312-    if (preq == NULL)
+src/nic/mlme.c-313-    {
+src/nic/mlme.c-314-        MLME_WARN("invalid scan request");
+src/nic/mlme.c-315-        *prsn = -1;
+src/nic/mlme.c-316-        PT_EXIT(pt);
+src/nic/mlme.c-317-    }
+src/nic/mlme.c-318-
+src/nic/mlme.c-319-    /* start scan */
+src/nic/mlme.c-320-    pmlme_info->try_cnt = 3;
+src/nic/mlme.c-321-retry :
+src/nic/mlme.c-322-    rst = zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
+src/nic/mlme.c-323-                        preq->bssid,
+src/nic/mlme.c-324-                        &preq->ssid, preq->ssid.length ? 1 : 0,
+src/nic/mlme.c-325-                        NULL, 0);
+src/nic/mlme.c-326-    if (rst)
+src/nic/mlme.c-327-    {
+src/nic/mlme.c-328-        MLME_WARN("start fail, error code: %d", rst);
+src/nic/mlme.c-329-        *prsn = -2;
+src/nic/mlme.c-330-        PT_EXIT(pt);
+src/nic/mlme.c-331-    }
+src/nic/mlme.c-332-
+src/nic/mlme.c-333-    /* scan process */
+src/nic/mlme.c-334-    MLME_INFO("wait probe respone...");
+src/nic/mlme.c-335-    PT_INIT(pt_sub);
+src/nic/mlme.c-336-    do
+src/nic/mlme.c-337-    {
+src/nic/mlme.c-338-        if (!PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, &rst)))
+src/nic/mlme.c-339-        {
+src/nic/mlme.c-340-            if (rst == ZT_SCAN_TAG_DONE && --pmlme_info->try_cnt)
+--
+src/nic/mlme.c-413-    PT_END(pt);
+src/nic/mlme.c-414-}
+src/nic/mlme.c-415-
+src/nic/mlme.c-416-static
+src/nic/mlme.c-417-zt_pt_ret_t core_conn_auth_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-418-                                zt_s32 *prsn)
+src/nic/mlme.c-419-{
+src/nic/mlme.c-420-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-421-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-422-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:423:    zt_msg_t *pmsg = NULL;
+src/nic/mlme.c-424-    zt_s32 rst;
+src/nic/mlme.c-425-
+src/nic/mlme.c-426-    PT_BEGIN(pt);
+src/nic/mlme.c-427-
+src/nic/mlme.c-428-    rst = zt_auth_sta_start(pnic_info);
+src/nic/mlme.c-429-    if (rst)
+src/nic/mlme.c-430-    {
+src/nic/mlme.c-431-        MLME_WARN("start fail, error code: %d", rst);
+src/nic/mlme.c-432-        *prsn = -1;
+src/nic/mlme.c-433-        PT_EXIT(pt);
+src/nic/mlme.c-434-    }
+src/nic/mlme.c-435-
+src/nic/mlme.c-436-    PT_INIT(pt_sub);
+src/nic/mlme.c-437-    while (PT_SCHEDULE(zt_auth_sta_thrd(pt_sub, pnic_info, &rst)))
+src/nic/mlme.c-438-    {
+src/nic/mlme.c-439-        if (!zt_msg_pop(pmsg_que, &pmsg))
+src/nic/mlme.c-440-        {
+src/nic/mlme.c-441-            if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
+src/nic/mlme.c-442-                    pmsg->tag == ZT_MLME_TAG_DEAUTH)
+src/nic/mlme.c-443-            {
+src/nic/mlme.c-444-                MLME_INFO("abort auth...");
+src/nic/mlme.c-445-                /* retrive disconnect information */
+src/nic/mlme.c-446-                pmlme_info->conn_res = *(zt_mlme_conn_res_t *)pmsg->value;
+src/nic/mlme.c-447-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-448-
+src/nic/mlme.c-449-                zt_auth_sta_stop(pnic_info);
+src/nic/mlme.c-450-                PT_WAIT_THREAD(pt, zt_auth_sta_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-451-                *prsn = -2;
+src/nic/mlme.c-452-                PT_EXIT(pt);
+src/nic/mlme.c-453-            }
+src/nic/mlme.c-454-            else if (pmsg->tag == ZT_MLME_TAG_SCAN)
+src/nic/mlme.c-455-            {
+src/nic/mlme.c-456-                MLME_WARN("push message(tag: %d)", pmsg->tag);
+src/nic/mlme.c-457-                zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-458-            }
+--
+src/nic/mlme.c-473-    *prsn = 0;
+src/nic/mlme.c-474-    PT_END(pt);
+src/nic/mlme.c-475-}
+src/nic/mlme.c-476-
+src/nic/mlme.c-477-static zt_pt_ret_t
+src/nic/mlme.c-478-core_conn_assoc_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/mlme.c-479-{
+src/nic/mlme.c-480-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-481-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-482-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:483:    zt_msg_t *pmsg = NULL;
+src/nic/mlme.c-484-    zt_s32 rst;
+src/nic/mlme.c-485-
+src/nic/mlme.c-486-    PT_BEGIN(pt);
+src/nic/mlme.c-487-
+src/nic/mlme.c-488-    rst = zt_assoc_start(pnic_info);
+src/nic/mlme.c-489-    if (rst)
+src/nic/mlme.c-490-    {
+src/nic/mlme.c-491-        MLME_WARN("start fail, error code: %d", rst);
+src/nic/mlme.c-492-        *prsn = -1;
+src/nic/mlme.c-493-        PT_EXIT(pt);
+src/nic/mlme.c-494-    }
+src/nic/mlme.c-495-
+src/nic/mlme.c-496-    PT_INIT(pt_sub);
+src/nic/mlme.c-497-    while (PT_SCHEDULE(zt_assoc_sta_thrd(pt_sub, pnic_info, &rst)))
+src/nic/mlme.c-498-    {
+src/nic/mlme.c-499-        if (!zt_msg_pop(pmsg_que, &pmsg))
+src/nic/mlme.c-500-        {
+src/nic/mlme.c-501-            if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
+src/nic/mlme.c-502-                    pmsg->tag == ZT_MLME_TAG_DEAUTH)
+src/nic/mlme.c-503-            {
+src/nic/mlme.c-504-                MLME_INFO("abort assoc...");
+src/nic/mlme.c-505-                /* retrive disconnect information */
+src/nic/mlme.c-506-                pmlme_info->conn_res = *(zt_mlme_conn_res_t *)pmsg->value;
+src/nic/mlme.c-507-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-508-
+src/nic/mlme.c-509-                zt_assoc_stop(pnic_info);
+src/nic/mlme.c-510-                PT_WAIT_THREAD(pt, zt_assoc_sta_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-511-                *prsn = -2;
+src/nic/mlme.c-512-                PT_EXIT(pt);
+src/nic/mlme.c-513-            }
+src/nic/mlme.c-514-            else if (pmsg->tag == ZT_MLME_TAG_SCAN)
+src/nic/mlme.c-515-            {
+src/nic/mlme.c-516-                MLME_WARN("push message(tag: %d)", pmsg->tag);
+src/nic/mlme.c-517-                zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-518-            }
+--
+src/nic/mlme.c-593-    PT_END(pt);
+src/nic/mlme.c-594-}
+src/nic/mlme.c-595-
+src/nic/mlme.c-596-static zt_pt_ret_t
+src/nic/mlme.c-597-core_conn_maintain_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-598-                             mlme_scan_t *preq, zt_s32 *prsn)
+src/nic/mlme.c-599-{
+src/nic/mlme.c-600-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-601-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-602-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:603:    zt_msg_t *pmsg;
+src/nic/mlme.c-604-    zt_s32 rst;
+src/nic/mlme.c-605-
+src/nic/mlme.c-606-    PT_BEGIN(pt);
+src/nic/mlme.c-607-
+src/nic/mlme.c-608-    rst = zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
+src/nic/mlme.c-609-                        NULL,
+src/nic/mlme.c-610-                        NULL, 0,
+src/nic/mlme.c-611-                        NULL, 0);
+src/nic/mlme.c-612-    if (rst)
+src/nic/mlme.c-613-    {
+src/nic/mlme.c-614-        MLME_WARN("start fail error code: %d", rst);
+src/nic/mlme.c-615-        *prsn = -1;
+src/nic/mlme.c-616-        PT_EXIT(pt);
+src/nic/mlme.c-617-    }
+src/nic/mlme.c-618-
+src/nic/mlme.c-619-    PT_INIT(pt_sub);
+src/nic/mlme.c-620-    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, &rst)))
+src/nic/mlme.c-621-    {
+src/nic/mlme.c-622-        if (!zt_msg_get(pmsg_que, &pmsg))
+src/nic/mlme.c-623-        {
+src/nic/mlme.c-624-            if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT)
+src/nic/mlme.c-625-            {
+src/nic/mlme.c-626-                MLME_DBG("abort scanning...");
+src/nic/mlme.c-627-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-628-                zt_scan_stop(pnic_info);
+src/nic/mlme.c-629-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-630-                break;
+src/nic/mlme.c-631-            }
+src/nic/mlme.c-632-            else if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
+src/nic/mlme.c-633-                     pmsg->tag == ZT_MLME_TAG_DEAUTH ||
+src/nic/mlme.c-634-                     pmsg->tag == ZT_MLME_TAG_DEASSOC)
+src/nic/mlme.c-635-            {
+src/nic/mlme.c-636-                zt_scan_stop(pnic_info);
+src/nic/mlme.c-637-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-638-                break;
+--
+src/nic/mlme.c-658-    PT_END(pt);
+src/nic/mlme.c-659-}
+src/nic/mlme.c-660-
+src/nic/mlme.c-661-static zt_pt_ret_t
+src/nic/mlme.c-662-core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-663-                              zt_s32 *prsn)
+src/nic/mlme.c-664-{
+src/nic/mlme.c-665-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-666-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-667-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:668:    zt_msg_t *pmsg;
+src/nic/mlme.c-669-    zt_s32 rst;
+src/nic/mlme.c-670-
+src/nic/mlme.c-671-    PT_BEGIN(pt);
+src/nic/mlme.c-672-
+src/nic/mlme.c-673-    {
+src/nic/mlme.c-674-        zt_wlan_ssid_t ssid = {0};
+src/nic/mlme.c-675-        wdn_net_info_st *pwdn_info = pmlme_info->pwdn_info;
+src/nic/mlme.c-676-        if (pwdn_info == NULL)
+src/nic/mlme.c-677-        {
+src/nic/mlme.c-678-            MLME_ERROR("wdn null");
+src/nic/mlme.c-679-            *prsn = -1;
+src/nic/mlme.c-680-            PT_EXIT(pt);
+src/nic/mlme.c-681-        }
+src/nic/mlme.c-682-        ssid.length = ZT_MIN(pwdn_info->ssid_len, ZT_80211_MAX_SSID_LEN);
+src/nic/mlme.c-683-        zt_memcpy(&ssid.data, pwdn_info->ssid, ssid.length);
+src/nic/mlme.c-684-        rst = zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
+src/nic/mlme.c-685-                            (void *)pwdn_info->bssid,
+src/nic/mlme.c-686-                            &ssid, 1,
+src/nic/mlme.c-687-                            &pwdn_info->channel, 1);
+src/nic/mlme.c-688-    }
+src/nic/mlme.c-689-    if (rst)
+src/nic/mlme.c-690-    {
+src/nic/mlme.c-691-        MLME_WARN("start fail error code: %d", rst);
+src/nic/mlme.c-692-        *prsn = -2;
+src/nic/mlme.c-693-        PT_EXIT(pt);
+src/nic/mlme.c-694-    }
+src/nic/mlme.c-695-
+src/nic/mlme.c-696-    PT_INIT(pt_sub);
+src/nic/mlme.c-697-    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, prsn)))
+src/nic/mlme.c-698-    {
+src/nic/mlme.c-699-        if (!zt_msg_get(pmsg_que, &pmsg))
+src/nic/mlme.c-700-        {
+src/nic/mlme.c-701-            if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT ||
+src/nic/mlme.c-702-                    pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+src/nic/mlme.c-703-            {
+--
+src/nic/mlme.c-823-
+src/nic/mlme.c-824-    PT_END(pt);
+src/nic/mlme.c-825-}
+src/nic/mlme.c-826-
+src/nic/mlme.c-827-static
+src/nic/mlme.c-828-zt_pt_ret_t core_conn_maintain_msg_thrd(zt_pt_t *pt, nic_info_st *pnic_info)
+src/nic/mlme.c-829-{
+src/nic/mlme.c-830-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-831-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-832-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:833:    zt_msg_t *pmsg;
+src/nic/mlme.c-834-    zt_s32 reason;
+src/nic/mlme.c-835-#ifdef CONFIG_LPS
+src/nic/mlme.c-836-    mlme_lps_t *param;
+src/nic/mlme.c-837-#endif
+src/nic/mlme.c-838-
+src/nic/mlme.c-839-    PT_BEGIN(pt);
+src/nic/mlme.c-840-
+src/nic/mlme.c-841-    for (;;)
+src/nic/mlme.c-842-    {
+src/nic/mlme.c-843-        mlme_set_state(pnic_info, MLME_STATE_IDLE);
+src/nic/mlme.c-844-
+src/nic/mlme.c-845-        /* wait new message */
+src/nic/mlme.c-846-        PT_YIELD_UNTIL(pt, !zt_msg_pop(pmsg_que, &pmsg));
+src/nic/mlme.c-847-
+src/nic/mlme.c-848-        if (pmsg->tag == ZT_MLME_TAG_SCAN)
+src/nic/mlme.c-849-        {
+src/nic/mlme.c-850-            pmlme_info->pscan_msg = pmsg;
+src/nic/mlme.c-851-            MLME_INFO("scan...");
+src/nic/mlme.c-852-            mlme_set_state(pnic_info, MLME_STATE_SCAN);
+src/nic/mlme.c-853-            PT_SPAWN(pt, pt_sub,
+src/nic/mlme.c-854-                     core_conn_maintain_scan_thrd(pt_sub, pnic_info,
+src/nic/mlme.c-855-                                                  (mlme_scan_t *)pmlme_info->pscan_msg->value,
+src/nic/mlme.c-856-                                                  &reason));
+src/nic/mlme.c-857-            zt_msg_del(pmsg_que, pmlme_info->pscan_msg);
+src/nic/mlme.c-858-            pmlme_info->pscan_msg = NULL;
+src/nic/mlme.c-859-        }
+src/nic/mlme.c-860-
+src/nic/mlme.c-861-        else if (pmsg->tag == ZT_MLME_TAG_KEEPALIVE)
+src/nic/mlme.c-862-        {
+src/nic/mlme.c-863-            zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-864-            MLME_INFO("keepalive...");
+src/nic/mlme.c-865-            mlme_set_state(pnic_info, MLME_STATE_SCAN);
+src/nic/mlme.c-866-            PT_SPAWN(pt, pt_sub,
+src/nic/mlme.c-867-                     core_conn_maintain_probe_thrd(pt_sub, pnic_info, &reason));
+src/nic/mlme.c-868-        }
+--
+src/nic/mlme.c-1132-    PT_END(pt);
+src/nic/mlme.c-1133-}
+src/nic/mlme.c-1134-
+src/nic/mlme.c-1135-#ifdef CFG_ENABLE_ADHOC_MODE
+src/nic/mlme.c-1136-zt_pt_ret_t
+src/nic/mlme.c-1137-adhoc_conn_maintain_msg(zt_pt_t *pt, nic_info_st *pnic_info)
+src/nic/mlme.c-1138-{
+src/nic/mlme.c-1139-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1140-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c-1141-    zt_adhoc_info_t *adhoc_info = pnic_info->adhoc_info;
+src/nic/mlme.c:1142:    zt_msg_t *pmsg;
+src/nic/mlme.c-1143-    zt_80211_mgmt_t *pmgmt;
+src/nic/mlme.c-1144-    wdn_net_info_st *pwdn_info;
+src/nic/mlme.c-1145-
+src/nic/mlme.c-1146-    PT_BEGIN(pt);
+src/nic/mlme.c-1147-
+src/nic/mlme.c-1148-    MLME_DBG();
+src/nic/mlme.c-1149-
+src/nic/mlme.c-1150-    for (;;)
+src/nic/mlme.c-1151-    {
+src/nic/mlme.c-1152-        PT_YIELD_UNTIL(pt, !zt_msg_pop(pmsg_que, &pmsg));
+src/nic/mlme.c-1153-
+src/nic/mlme.c-1154-        if (pmsg->tag == ZT_MLME_TAG_IBSS_LEAVE)
+src/nic/mlme.c-1155-        {
+src/nic/mlme.c-1156-            MLME_INFO("mlme  leave ibss...");
+src/nic/mlme.c-1157-            zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-1158-            PT_EXIT(pt);
+src/nic/mlme.c-1159-        }
+src/nic/mlme.c-1160-        else if (pmsg->tag == ZT_MLME_TAG_IBSS_BEACON_FRAME)
+src/nic/mlme.c-1161-        {
+src/nic/mlme.c-1162-            /* create wdn if no find the node */
+src/nic/mlme.c-1163-            pmgmt = (zt_80211_mgmt_t *)pmsg->value;
+src/nic/mlme.c-1164-
+src/nic/mlme.c-1165-            pwdn_info = zt_wdn_find_info(pnic_info, pmgmt->sa);
+src/nic/mlme.c-1166-            if (pwdn_info)
+src/nic/mlme.c-1167-            {
+src/nic/mlme.c-1168-                MLME_WARN("bss has been build");
+src/nic/mlme.c-1169-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-1170-                PT_EXIT(pt);
+src/nic/mlme.c-1171-            }
+src/nic/mlme.c-1172-
+src/nic/mlme.c-1173-            pwdn_info = zt_wdn_add(pnic_info, pmgmt->sa);
+src/nic/mlme.c-1174-            if (!pwdn_info)
+src/nic/mlme.c-1175-            {
+src/nic/mlme.c-1176-                MLME_WARN("wdn add fail");
+src/nic/mlme.c-1177-            }
+--
+src/nic/mlme.c-1197-    PT_END(pt);
+src/nic/mlme.c-1198-}
+src/nic/mlme.c-1199-
+src/nic/mlme.c-1200-static
+src/nic/mlme.c-1201-zt_pt_ret_t core_conn_scan_ibss_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
+src/nic/mlme.c-1202-                                     mlme_conn_ibss_t *preq, zt_s32 *prsn)
+src/nic/mlme.c-1203-{
+src/nic/mlme.c-1204-    zt_pt_t *pt_sub = &pt[1];
+src/nic/mlme.c-1205-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1206-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:1207:    zt_msg_t *pmsg;
+src/nic/mlme.c-1208-    zt_s32 rst;
+src/nic/mlme.c-1209-
+src/nic/mlme.c-1210-    PT_BEGIN(pt);
+src/nic/mlme.c-1211-
+src/nic/mlme.c-1212-    if (preq == NULL)
+src/nic/mlme.c-1213-    {
+src/nic/mlme.c-1214-        MLME_WARN("invalid scan request");
+src/nic/mlme.c-1215-        *prsn = -1;
+src/nic/mlme.c-1216-        PT_EXIT(pt);
+src/nic/mlme.c-1217-    }
+src/nic/mlme.c-1218-
+src/nic/mlme.c-1219-    /* start scan */
+src/nic/mlme.c-1220-    rst = zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
+src/nic/mlme.c-1221-                        NULL,
+src/nic/mlme.c-1222-                        &preq->ssid, 1,
+src/nic/mlme.c-1223-                        &preq->ch, 1);
+src/nic/mlme.c-1224-    if (rst)
+src/nic/mlme.c-1225-    {
+src/nic/mlme.c-1226-        *prsn = -2;
+src/nic/mlme.c-1227-        MLME_WARN("start fail, error code: %d", rst);
+src/nic/mlme.c-1228-        PT_EXIT(pt);
+src/nic/mlme.c-1229-    }
+src/nic/mlme.c-1230-    MLME_INFO("wait probe respone...");
+src/nic/mlme.c-1231-
+src/nic/mlme.c-1232-
+src/nic/mlme.c-1233-    /* scan process */
+src/nic/mlme.c-1234-    PT_INIT(pt_sub);
+src/nic/mlme.c-1235-    do
+src/nic/mlme.c-1236-    {
+src/nic/mlme.c-1237-        if (!PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, &rst)))
+src/nic/mlme.c-1238-        {
+src/nic/mlme.c-1239-            MLME_WARN("scan end, reason code: %d", rst);
+src/nic/mlme.c-1240-            *prsn = -3;
+src/nic/mlme.c-1241-            PT_EXIT(pt);
+src/nic/mlme.c-1242-        }
+--
+src/nic/mlme.c-1285-
+src/nic/mlme.c-1286-static zt_pt_ret_t mlme_core_thrd(nic_info_st *pnic_info)
+src/nic/mlme.c-1287-{
+src/nic/mlme.c-1288-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1289-    zt_pt_t *pt = &pmlme_info->pt[0], *pt_sub = &pt[1];
+src/nic/mlme.c-1290-#ifdef CFG_ENABLE_ADHOC_MODE
+src/nic/mlme.c-1291-    zt_adhoc_info_t *adhoc_info = pnic_info->adhoc_info;
+src/nic/mlme.c-1292-    mlme_conn_ibss_t *param;
+src/nic/mlme.c-1293-#endif
+src/nic/mlme.c-1294-    zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c:1295:    zt_msg_t *pmsg;
+src/nic/mlme.c-1296-    zt_s32 reason;
+src/nic/mlme.c-1297-
+src/nic/mlme.c-1298-    PT_BEGIN(pt);
+src/nic/mlme.c-1299-
+src/nic/mlme.c-1300-    mlme_set_state(pnic_info, MLME_STATE_IDLE);
+src/nic/mlme.c-1301-
+src/nic/mlme.c-1302-    while (zt_true)
+src/nic/mlme.c-1303-    {
+src/nic/mlme.c-1304-        if (pmlme_info->freeze_pend)
+src/nic/mlme.c-1305-        {
+src/nic/mlme.c-1306-            mlme_set_state(pnic_info, MLME_STATE_FREEZE);
+src/nic/mlme.c-1307-            MLME_INFO("thread abort");
+src/nic/mlme.c-1308-            PT_EXIT(pt);
+src/nic/mlme.c-1309-        }
+src/nic/mlme.c-1310-        if (!zt_msg_pop(pmsg_que, &pmsg))
+src/nic/mlme.c-1311-        {
+src/nic/mlme.c-1312-            break;
+src/nic/mlme.c-1313-        }
+src/nic/mlme.c-1314-        PT_YIELD(pt);
+src/nic/mlme.c-1315-    }
+src/nic/mlme.c-1316-
+src/nic/mlme.c-1317-    if (pmsg->tag == ZT_MLME_TAG_SCAN)
+src/nic/mlme.c-1318-    {
+src/nic/mlme.c-1319-        mlme_set_state(pnic_info, MLME_STATE_SCAN);
+src/nic/mlme.c-1320-        /* retrive message information */
+src/nic/mlme.c-1321-        pmlme_info->pscan_msg = pmsg;
+src/nic/mlme.c-1322-        /* do scan process */
+src/nic/mlme.c-1323-        MLME_INFO("scanning...");
+src/nic/mlme.c-1324-        PT_SPAWN(pt, pt_sub,
+src/nic/mlme.c-1325-                 core_scan_thrd(pt_sub, pnic_info,
+src/nic/mlme.c-1326-                                (void *)pmlme_info->pscan_msg->value,
+src/nic/mlme.c-1327-                                &reason));
+src/nic/mlme.c-1328-        /* delete scan request message */
+src/nic/mlme.c-1329-        zt_msg_del(pmsg_que, pmlme_info->pscan_msg);
+src/nic/mlme.c-1330-        pmlme_info->pscan_msg = NULL;
+--
+src/nic/mlme.c-1532-        zt_msleep(1);
+src/nic/mlme.c-1533-    }
+src/nic/mlme.c-1534-
+src/nic/mlme.c-1535-    mlme_set_state(pnic_info, MLME_STATE_TERM);
+src/nic/mlme.c-1536-    zt_os_api_thread_exit(pmlme_info->tid);
+src/nic/mlme.c-1537-
+src/nic/mlme.c-1538-    return 0;
+src/nic/mlme.c-1539-}
+src/nic/mlme.c-1540-
+src/nic/mlme.c-1541-static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
+src/nic/mlme.c:1542:                            zt_msg_tag_t tag, void *value, zt_u8 len)
+src/nic/mlme.c-1543-{
+src/nic/mlme.c-1544-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-1545-    zt_msg_que_t *pmsg_que;
+src/nic/mlme.c:1546:    zt_msg_t *pmsg;
+src/nic/mlme.c-1547-    zt_s32 rst;
+src/nic/mlme.c-1548-
+src/nic/mlme.c-1549-    if (pnic_info == NULL)
+src/nic/mlme.c-1550-    {
+src/nic/mlme.c-1551-        return -1;
+src/nic/mlme.c-1552-    }
+src/nic/mlme.c-1553-
+src/nic/mlme.c-1554-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1555-    if (pmlme_info == NULL)
+src/nic/mlme.c-1556-    {
+src/nic/mlme.c-1557-        return -2;
+src/nic/mlme.c-1558-    }
+src/nic/mlme.c-1559-
+src/nic/mlme.c-1560-    pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c-1561-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/mlme.c-1562-    if (rst)
+src/nic/mlme.c-1563-    {
+src/nic/mlme.c-1564-        MLME_WARN("zt_msg_new fail error code: %d", rst);
+src/nic/mlme.c-1565-        return -3;
+src/nic/mlme.c-1566-    }
+src/nic/mlme.c-1567-    if (value && len)
+src/nic/mlme.c-1568-    {
+src/nic/mlme.c-1569-        pmsg->len = len;
+src/nic/mlme.c-1570-        zt_memcpy(pmsg->value, value, len);
+src/nic/mlme.c-1571-    }
+src/nic/mlme.c-1572-
+src/nic/mlme.c-1573-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-1574-    if (rst)
+src/nic/mlme.c-1575-    {
+src/nic/mlme.c-1576-        zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-1577-        MLME_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/mlme.c-1578-        return -4;
+src/nic/mlme.c-1579-    }
+src/nic/mlme.c-1580-
+src/nic/mlme.c-1581-    return 0;
+src/nic/mlme.c-1582-}
+src/nic/mlme.c-1583-
+src/nic/mlme.c-1584-zt_s32 zt_mlme_scan_start(nic_info_st *pnic_info, scan_type_e type,
+src/nic/mlme.c-1585-                          zt_wlan_ssid_t ssids[], zt_u8 ssid_num,
+src/nic/mlme.c-1586-                          zt_u8 chs[], zt_u8 ch_num,
+src/nic/mlme.c-1587-                          zt_mlme_framework_e frm_work)
+src/nic/mlme.c-1588-{
+src/nic/mlme.c-1589-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-1590-    zt_msg_que_t *pmsg_que;
+src/nic/mlme.c:1591:    zt_msg_t *pmsg;
+src/nic/mlme.c-1592-    zt_s32 rst;
+src/nic/mlme.c-1593-
+src/nic/mlme.c-1594-    if (!pnic_info)
+src/nic/mlme.c-1595-    {
+src/nic/mlme.c-1596-        return -1;
+src/nic/mlme.c-1597-    }
+src/nic/mlme.c-1598-
+src/nic/mlme.c-1599-    if (pnic_info->is_driver_critical)
+src/nic/mlme.c-1600-    {
+src/nic/mlme.c-1601-        MLME_WARN("driver enter critical");
+src/nic/mlme.c-1602-        return -2;
+src/nic/mlme.c-1603-    }
+src/nic/mlme.c-1604-
+src/nic/mlme.c-1605-    if (!pnic_info->is_up)
+src/nic/mlme.c-1606-    {
+src/nic/mlme.c-1607-        MLME_WARN("ndev is down");
+src/nic/mlme.c-1608-        return -3;
+src/nic/mlme.c-1609-    }
+src/nic/mlme.c-1610-
+src/nic/mlme.c-1611-    {
+src/nic/mlme.c-1612-        sys_work_mode_e work_mode = zt_local_cfg_get_work_mode(pnic_info);
+src/nic/mlme.c-1613-        if (work_mode != ZT_INFRA_MODE)
+src/nic/mlme.c-1614-#ifdef CFG_ENABLE_AP_MODE
+src/nic/mlme.c-1615-            if (work_mode != ZT_MASTER_MODE)
+src/nic/mlme.c-1616-#endif
+src/nic/mlme.c-1617-            {
+src/nic/mlme.c-1618-                return -4;
+src/nic/mlme.c-1619-            }
+src/nic/mlme.c-1620-    }
+src/nic/mlme.c-1621-
+src/nic/mlme.c-1622-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1623-    if (!pmlme_info)
+src/nic/mlme.c-1624-    {
+src/nic/mlme.c-1625-        return -5;
+src/nic/mlme.c-1626-    }
+--
+src/nic/mlme.c-1703-    }
+src/nic/mlme.c-1704-
+src/nic/mlme.c-1705-    return 0;
+src/nic/mlme.c-1706-}
+src/nic/mlme.c-1707-
+src/nic/mlme.c-1708-zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
+src/nic/mlme.c-1709-                             zt_80211_mgmt_t *pmgmt, zt_u16 mgmt_len)
+src/nic/mlme.c-1710-{
+src/nic/mlme.c-1711-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-1712-    zt_msg_que_t *pmsg_que;
+src/nic/mlme.c:1713:    zt_msg_t *pmsg;
+src/nic/mlme.c-1714-    zt_s32 rst;
+src/nic/mlme.c-1715-
+src/nic/mlme.c-1716-    if (pnic_info == NULL || (pmgmt == NULL && mgmt_len == 0))
+src/nic/mlme.c-1717-    {
+src/nic/mlme.c-1718-        return -1;
+src/nic/mlme.c-1719-    }
+src/nic/mlme.c-1720-
+src/nic/mlme.c-1721-    if (!pnic_info->is_up)
+src/nic/mlme.c-1722-    {
+src/nic/mlme.c-1723-        MLME_WARN("ndev down");
+src/nic/mlme.c-1724-        return -2;
+src/nic/mlme.c-1725-    }
+src/nic/mlme.c-1726-
+src/nic/mlme.c-1727-    if (!zt_is_scanning(pnic_info))
+src/nic/mlme.c-1728-    {
+src/nic/mlme.c-1729-        return -3;
+src/nic/mlme.c-1730-    }
+src/nic/mlme.c-1731-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1732-    pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c-1733-
+src/nic/mlme.c-1734-    MLME_DBG();
+src/nic/mlme.c-1735-
+src/nic/mlme.c-1736-    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+src/nic/mlme.c-1737-    if (rst)
+src/nic/mlme.c-1738-    {
+src/nic/mlme.c-1739-        MLME_WARN("msg new fail error code: %d", rst);
+src/nic/mlme.c-1740-        return -4;
+src/nic/mlme.c-1741-    }
+src/nic/mlme.c-1742-    /* copy frame */
+src/nic/mlme.c-1743-    pmsg->len = mgmt_len;
+src/nic/mlme.c-1744-    zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+src/nic/mlme.c-1745-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-1746-    if (rst)
+src/nic/mlme.c-1747-    {
+src/nic/mlme.c-1748-        zt_msg_del(pmsg_que, pmsg);
+--
+src/nic/mlme.c-1752-
+src/nic/mlme.c-1753-    return 0;
+src/nic/mlme.c-1754-}
+src/nic/mlme.c-1755-
+src/nic/mlme.c-1756-zt_s32 zt_mlme_conn_start(nic_info_st *pnic_info, zt_80211_bssid_t bssid,
+src/nic/mlme.c-1757-                          zt_wlan_ssid_t *pssid, zt_mlme_framework_e frm_work,
+src/nic/mlme.c-1758-                          zt_bool indicate_en)
+src/nic/mlme.c-1759-{
+src/nic/mlme.c-1760-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-1761-    zt_msg_que_t *pmsg_que;
+src/nic/mlme.c:1762:    zt_msg_t *pmsg;
+src/nic/mlme.c-1763-    mlme_conn_t *param;
+src/nic/mlme.c-1764-    zt_s32 rst;
+src/nic/mlme.c-1765-
+src/nic/mlme.c-1766-    if (!pnic_info)
+src/nic/mlme.c-1767-    {
+src/nic/mlme.c-1768-        return -1;
+src/nic/mlme.c-1769-    }
+src/nic/mlme.c-1770-
+src/nic/mlme.c-1771-    if (pnic_info->is_driver_critical)
+src/nic/mlme.c-1772-    {
+src/nic/mlme.c-1773-        return -2;
+src/nic/mlme.c-1774-    }
+src/nic/mlme.c-1775-
+src/nic/mlme.c-1776-    if (!pnic_info->is_up)
+src/nic/mlme.c-1777-    {
+src/nic/mlme.c-1778-        MLME_WARN("ndev down");
+src/nic/mlme.c-1779-        return -3;
+src/nic/mlme.c-1780-    }
+src/nic/mlme.c-1781-#ifdef CFG_ENABLE_AP_MODE
+src/nic/mlme.c-1782-    if (zt_local_cfg_get_work_mode(pnic_info) == ZT_MASTER_MODE)
+src/nic/mlme.c-1783-    {
+src/nic/mlme.c-1784-        MLME_WARN("ap no support");
+src/nic/mlme.c-1785-        return -4;
+src/nic/mlme.c-1786-    }
+src/nic/mlme.c-1787-#endif
+src/nic/mlme.c-1788-
+src/nic/mlme.c-1789-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1790-    if (!pmlme_info)
+src/nic/mlme.c-1791-    {
+src/nic/mlme.c-1792-        return -5;
+src/nic/mlme.c-1793-    }
+src/nic/mlme.c-1794-    pmlme_info->freeze_pend = zt_false;
+src/nic/mlme.c-1795-
+src/nic/mlme.c-1796-    if (!bssid && !pssid)
+src/nic/mlme.c-1797-    {
+--
+src/nic/mlme.c-2182-}
+src/nic/mlme.c-2183-
+src/nic/mlme.c-2184-#ifdef CFG_ENABLE_ADHOC_MODE
+src/nic/mlme.c-2185-zt_s32 zt_mlme_scan_ibss_start(nic_info_st *pnic_info,
+src/nic/mlme.c-2186-                               zt_wlan_ssid_t *pssid,
+src/nic/mlme.c-2187-                               zt_u8 *pch,
+src/nic/mlme.c-2188-                               zt_mlme_framework_e frm_work)
+src/nic/mlme.c-2189-{
+src/nic/mlme.c-2190-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-2191-    zt_msg_que_t *pmsg_que;
+src/nic/mlme.c:2192:    zt_msg_t *pmsg;
+src/nic/mlme.c-2193-    zt_s32 rst;
+src/nic/mlme.c-2194-
+src/nic/mlme.c-2195-    if (!pnic_info)
+src/nic/mlme.c-2196-    {
+src/nic/mlme.c-2197-        return -1;
+src/nic/mlme.c-2198-    }
+src/nic/mlme.c-2199-
+src/nic/mlme.c-2200-    if (pnic_info->is_driver_critical)
+src/nic/mlme.c-2201-    {
+src/nic/mlme.c-2202-        return -2;
+src/nic/mlme.c-2203-    }
+src/nic/mlme.c-2204-
+src/nic/mlme.c-2205-    if (!pnic_info->is_up)
+src/nic/mlme.c-2206-    {
+src/nic/mlme.c-2207-        MLME_WARN("ndev is down");
+src/nic/mlme.c-2208-        return -3;
+src/nic/mlme.c-2209-    }
+src/nic/mlme.c-2210-
+src/nic/mlme.c-2211-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-2212-    if (!pmlme_info)
+src/nic/mlme.c-2213-    {
+src/nic/mlme.c-2214-        return -4;
+src/nic/mlme.c-2215-    }
+src/nic/mlme.c-2216-    pmlme_info->freeze_pend = zt_false;
+src/nic/mlme.c-2217-
+src/nic/mlme.c-2218-    if (!pssid || !pch)
+src/nic/mlme.c-2219-    {
+src/nic/mlme.c-2220-        return -5;
+src/nic/mlme.c-2221-    }
+src/nic/mlme.c-2222-
+src/nic/mlme.c-2223-    MLME_DBG();
+src/nic/mlme.c-2224-
+src/nic/mlme.c-2225-    pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c-2226-    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN_IBSS, &pmsg);
+src/nic/mlme.c-2227-    if (rst)
+--
+src/nic/mlme.h-124-    zt_add_ba_parm_st  bareq_parm;
+src/nic/mlme.h-125-    zt_u8              baCreating;
+src/nic/mlme.h-126-
+src/nic/mlme.h-127-    zt_pt_t pt[10];
+src/nic/mlme.h-128-    zt_msg_que_t msg_que;
+src/nic/mlme.h-129-    zt_timer_t traffic_timer;
+src/nic/mlme.h-130-    zt_timer_t keep_alive_timer;
+src/nic/mlme.h-131-    wdn_net_info_st *pwdn_info;
+src/nic/mlme.h-132-    zt_u8 try_cnt;
+src/nic/mlme.h-133-
+src/nic/mlme.h:134:    zt_msg_t *pconn_msg;
+src/nic/mlme.h:135:    zt_msg_t *pscan_msg;
+src/nic/mlme.h:136:    zt_msg_t *pba_rsp_msg;
+src/nic/mlme.h-137-
+src/nic/mlme.h-138-    zt_mlme_conn_res_t conn_res;
+src/nic/mlme.h-139-
+src/nic/mlme.h-140-    zt_bool freeze_pend;
+src/nic/mlme.h-141-
+src/nic/mlme.h-142-    zt_u8 probereq_wps_ie[ZT_80211_IES_SIZE_MAX];
+src/nic/mlme.h-143-    zt_u8 wps_beacon_ie[ZT_80211_IES_SIZE_MAX];
+src/nic/mlme.h-144-    zt_u8 wps_probe_resp_ie[ZT_80211_IES_SIZE_MAX];
+src/nic/mlme.h-145-    zt_u8 wps_assoc_resp_ie[ZT_80211_IES_SIZE_MAX];
+src/nic/mlme.h-146-
+src/nic/mlme.h-147-    zt_u32 wps_ie_len;
+src/nic/mlme.h-148-    zt_u32 wps_beacon_ie_len;
+src/nic/mlme.h-149-    zt_u32 wps_probe_resp_ie_len;
+src/nic/mlme.h-150-    zt_u32 wps_assoc_resp_ie_len;
+src/nic/mlme.h-151-
+src/nic/mlme.h-152-    zt_u8 action_public_dialog_token;
+src/nic/mlme.h-153-    zt_u16 action_public_rxseq;
+src/nic/mlme.h-154-
+src/nic/mlme.h-155-    zt_bool vir_scanning_intf;
+src/nic/mlme.h-156-} mlme_info_t;
+src/nic/mlme.h-157-
+src/nic/mlme.h-158-/* function declaration */
+src/nic/mlme.h-159-zt_inline
+src/nic/mlme.h-160-static zt_bool zt_mlme_check_mode(nic_info_st *pnic_info, sys_work_mode_e mode)
+src/nic/mlme.h-161-{
+src/nic/mlme.h-162-    local_info_st *plocal_info = pnic_info->local_info;
+src/nic/mlme.h-163-
+src/nic/mlme.h-164-    return (zt_bool)(plocal_info->work_mode == mode);
+src/nic/mlme.h-165-}
+src/nic/mlme.h-166-
+src/nic/mlme.h-167-zt_s32 zt_mlme_get_state(nic_info_st *pnic_info, mlme_state_e *state);
+src/nic/mlme.h-168-zt_s32 zt_mlme_get_connect(nic_info_st *pnic_info, zt_bool *bconnect);
+src/nic/mlme.h-169-zt_s32 zt_mlme_get_traffic_busy(nic_info_st *pnic_info, zt_bool *bbusy);
+src/nic/mlme.h-170-zt_s32 zt_mlme_abort(nic_info_st *pnic_info);
+src/nic/mlme.h-171-zt_s32 zt_mlme_scan_start(nic_info_st *pnic_info, scan_type_e type,
+--
+src/nic/scan.c-496-exit:
+src/nic/scan.c-497-    zt_os_api_sema_post(&pscan_info->req_lock);
+src/nic/scan.c-498-    return rst;
+src/nic/scan.c-499-}
+src/nic/scan.c-500-
+src/nic/scan.c-501-zt_inline static
+src/nic/scan.c-502-zt_pt_ret_t zt_sta_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/scan.c-503-{
+src/nic/scan.c-504-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-505-    zt_msg_que_t *pmsg_que;
+src/nic/scan.c:506:    zt_msg_t *pmsg;
+src/nic/scan.c-507-    zt_s32 reason = ZT_SCAN_TAG_DONE;
+src/nic/scan.c-508-    p2p_info_st *p2p_info = pnic_info->p2p;
+src/nic/scan.c-509-    zt_u32 scan_timeout;
+src/nic/scan.c-510-    zt_s32 rst;
+src/nic/scan.c-511-
+src/nic/scan.c-512-    if (pt == NULL || pnic_info == NULL || prsn == NULL)
+src/nic/scan.c-513-    {
+src/nic/scan.c-514-        PT_EXIT(pt);
+src/nic/scan.c-515-    }
+src/nic/scan.c-516-    pscan_info = pnic_info->scan_info;
+src/nic/scan.c-517-    pmsg_que = &pscan_info->msg_que;
+src/nic/scan.c-518-
+src/nic/scan.c-519-    PT_BEGIN(pt);
+src/nic/scan.c-520-
+src/nic/scan.c-521-    SCAN_DBG();
+src/nic/scan.c-522-
+src/nic/scan.c-523-    /* wait until scan process done. */
+src/nic/scan.c-524-    PT_WAIT_WHILE(pt, nic_mlme_hw_access_trylock(pnic_info));
+src/nic/scan.c-525-    /* get scan start message. */
+src/nic/scan.c-526-    do
+src/nic/scan.c-527-    {
+src/nic/scan.c-528-        rst = zt_msg_pop(pmsg_que, &pmsg);
+src/nic/scan.c-529-        if (rst)
+src/nic/scan.c-530-        {
+src/nic/scan.c-531-            /* no message */
+src/nic/scan.c-532-            SCAN_WARN("zt_msg_pop fail, error code: %d", rst);
+src/nic/scan.c-533-            nic_mlme_hw_access_unlock(pnic_info);
+src/nic/scan.c-534-            *prsn = -1;
+src/nic/scan.c-535-            PT_EXIT(pt);
+src/nic/scan.c-536-        }
+src/nic/scan.c-537-        if (pmsg->tag != ZT_SCAN_TAG_START)
+src/nic/scan.c-538-        {
+src/nic/scan.c-539-            /* undesired message */
+src/nic/scan.c-540-            SCAN_DBG("undesired message");
+src/nic/scan.c-541-            zt_msg_del(pmsg_que, pmsg);
+--
+src/nic/scan.c-791-    /* resume tx */
+src/nic/scan.c-792-    tx_resume(pnic_info);
+src/nic/scan.c-793-    if (pnic_info->buddy_nic && zt_local_cfg_get_work_mode(pnic_info->buddy_nic) == ZT_MASTER_MODE)
+src/nic/scan.c-794-    {
+src/nic/scan.c-795-        tx_resume(pnic_info->buddy_nic);
+src/nic/scan.c-796-    }
+src/nic/scan.c-797-
+src/nic/scan.c-798-    /* free scan request infomation */
+src/nic/scan.c-799-    PT_WAIT_WHILE(pt, zt_os_api_sema_try(&pscan_info->req_lock));
+src/nic/scan.c-800-    zt_msg_del(pmsg_que,
+src/nic/scan.c:801:               ZT_CONTAINER_OF((void *)pscan_info->preq, zt_msg_t, value));
+src/nic/scan.c-802-    pscan_info->preq = NULL;
+src/nic/scan.c-803-    zt_os_api_sema_post(&pscan_info->req_lock);
+src/nic/scan.c-804-    nic_mlme_hw_access_unlock(pnic_info);
+src/nic/scan.c-805-
+src/nic/scan.c-806-    *prsn = reason;
+src/nic/scan.c-807-    if (reason < 0)
+src/nic/scan.c-808-    {
+src/nic/scan.c-809-        SCAN_WARN("scan fail, error code: %d", reason);
+src/nic/scan.c-810-        PT_EXIT(pt);
+src/nic/scan.c-811-    }
+src/nic/scan.c-812-
+src/nic/scan.c-813-    PT_END(pt);
+src/nic/scan.c-814-}
+src/nic/scan.c-815-
+src/nic/scan.c-816-#ifdef CFG_ENABLE_AP_MODE
+src/nic/scan.c-817-zt_inline static zt_s32 ap_scan_setting(nic_info_st *pnic_info)
+src/nic/scan.c-818-{
+src/nic/scan.c-819-    zt_scan_info_t *pscan_info = pnic_info->scan_info;
+src/nic/scan.c-820-    zt_bool bch_spec = !!pscan_info->preq->ch_num;
+src/nic/scan.c-821-
+src/nic/scan.c-822-    if (pscan_info->preq->type == SCAN_TYPE_ACTIVE)
+src/nic/scan.c-823-    {
+src/nic/scan.c-824-        zt_bool bfix_ch = zt_false;
+src/nic/scan.c-825-        if (zt_80211_is_valid_bssid(pscan_info->preq->bssid))
+src/nic/scan.c-826-        {
+src/nic/scan.c-827-            /* match in scan queue */
+src/nic/scan.c-828-            zt_wlan_mgmt_scan_que_node_t *pscan_que_node;
+src/nic/scan.c-829-            zt_wlan_mgmt_scan_que_for_rst_e rst;
+src/nic/scan.c-830-            SCAN_DBG("target bssid: "ZT_MAC_FMT,
+src/nic/scan.c-831-                     ZT_MAC_ARG(pscan_info->preq->bssid));
+src/nic/scan.c-832-            zt_wlan_mgmt_scan_que_for_begin(pnic_info, pscan_que_node)
+src/nic/scan.c-833-            {
+src/nic/scan.c-834-                if (!zt_memcmp(pscan_que_node->bssid, pscan_info->preq->bssid,
+src/nic/scan.c-835-                               sizeof(pscan_que_node->bssid)))
+src/nic/scan.c-836-                {
+--
+src/nic/scan.c-939-        return -2;
+src/nic/scan.c-940-    }
+src/nic/scan.c-941-
+src/nic/scan.c-942-    return 0;
+src/nic/scan.c-943-}
+src/nic/scan.c-944-
+src/nic/scan.c-945-zt_pt_ret_t zt_ap_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/scan.c-946-{
+src/nic/scan.c-947-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-948-    zt_msg_que_t *pmsg_que;
+src/nic/scan.c:949:    zt_msg_t *pmsg;
+src/nic/scan.c-950-    zt_s32 reason = ZT_SCAN_TAG_DONE;
+src/nic/scan.c-951-    zt_s32 rst;
+src/nic/scan.c-952-
+src/nic/scan.c-953-    if (pt == NULL || pnic_info == NULL || prsn == NULL)
+src/nic/scan.c-954-    {
+src/nic/scan.c-955-        PT_EXIT(pt);
+src/nic/scan.c-956-    }
+src/nic/scan.c-957-    pscan_info = pnic_info->scan_info;
+src/nic/scan.c-958-    pmsg_que = &pscan_info->msg_que;
+src/nic/scan.c-959-
+src/nic/scan.c-960-    PT_BEGIN(pt);
+src/nic/scan.c-961-
+src/nic/scan.c-962-    SCAN_DBG();
+src/nic/scan.c-963-
+src/nic/scan.c-964-    /* wait until scan process done. */
+src/nic/scan.c-965-    PT_WAIT_WHILE(pt, nic_mlme_hw_access_trylock(pnic_info));
+src/nic/scan.c-966-    /* get scan start message. */
+src/nic/scan.c-967-    do
+src/nic/scan.c-968-    {
+src/nic/scan.c-969-        rst = zt_msg_pop(pmsg_que, &pmsg);
+src/nic/scan.c-970-        if (rst)
+src/nic/scan.c-971-        {
+src/nic/scan.c-972-            /* no message */
+src/nic/scan.c-973-            SCAN_WARN("zt_msg_pop fail, error code: %d", rst);
+src/nic/scan.c-974-            nic_mlme_hw_access_unlock(pnic_info);
+src/nic/scan.c-975-            *prsn = -1;
+src/nic/scan.c-976-            PT_EXIT(pt);
+src/nic/scan.c-977-        }
+src/nic/scan.c-978-        if (pmsg->tag != ZT_SCAN_TAG_START)
+src/nic/scan.c-979-        {
+src/nic/scan.c-980-            /* undesired message */
+src/nic/scan.c-981-            SCAN_DBG("undesired message");
+src/nic/scan.c-982-            zt_msg_del(pmsg_que, pmsg);
+src/nic/scan.c-983-            PT_YIELD(pt);
+src/nic/scan.c-984-            continue;
+--
+src/nic/scan.c-1185-
+src/nic/scan.c-1186-    /* resume ars */
+src/nic/scan.c-1187-    zt_mcu_ars_switch(pnic_info, zt_true);
+src/nic/scan.c-1188-
+src/nic/scan.c-1189-    /* resume tx */
+src/nic/scan.c-1190-    tx_resume(pnic_info);
+src/nic/scan.c-1191-
+src/nic/scan.c-1192-    /* free scan request infomation */
+src/nic/scan.c-1193-    PT_WAIT_WHILE(pt, zt_os_api_sema_try(&pscan_info->req_lock));
+src/nic/scan.c-1194-    zt_msg_del(pmsg_que,
+src/nic/scan.c:1195:               ZT_CONTAINER_OF((void *)pscan_info->preq, zt_msg_t, value));
+src/nic/scan.c-1196-    pscan_info->preq = NULL;
+src/nic/scan.c-1197-    zt_os_api_sema_post(&pscan_info->req_lock);
+src/nic/scan.c-1198-    nic_mlme_hw_access_unlock(pnic_info);
+src/nic/scan.c-1199-
+src/nic/scan.c-1200-    *prsn = reason;
+src/nic/scan.c-1201-    if (reason < 0)
+src/nic/scan.c-1202-    {
+src/nic/scan.c-1203-        SCAN_WARN("scan fail, error code: %d", reason);
+src/nic/scan.c-1204-        PT_EXIT(pt);
+src/nic/scan.c-1205-    }
+src/nic/scan.c-1206-
+src/nic/scan.c-1207-    PT_END(pt);
+src/nic/scan.c-1208-}
+src/nic/scan.c-1209-#endif
+src/nic/scan.c-1210-
+src/nic/scan.c-1211-zt_pt_ret_t zt_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info, zt_s32 *prsn)
+src/nic/scan.c-1212-{
+src/nic/scan.c-1213-    return
+src/nic/scan.c-1214-#ifdef CFG_ENABLE_AP_MODE
+src/nic/scan.c-1215-        zt_local_cfg_get_work_mode(pnic_info) == ZT_MASTER_MODE ?
+src/nic/scan.c-1216-        zt_ap_scan_thrd(pt, pnic_info, prsn) :
+src/nic/scan.c-1217-#endif
+src/nic/scan.c-1218-        zt_sta_scan_thrd(pt, pnic_info, prsn);
+src/nic/scan.c-1219-}
+src/nic/scan.c-1220-
+src/nic/scan.c-1221-zt_s32 zt_scan_start(nic_info_st *pnic_info, scan_type_e type,
+src/nic/scan.c-1222-                     zt_80211_bssid_t bssid,
+src/nic/scan.c-1223-                     zt_wlan_ssid_t ssids[], zt_u8 ssid_num,
+src/nic/scan.c-1224-                     zt_u8 chs[], zt_u8 ch_num)
+src/nic/scan.c-1225-{
+src/nic/scan.c-1226-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-1227-    zt_msg_que_t *pmsg_que;
+src/nic/scan.c:1228:    zt_msg_t *pmsg;
+src/nic/scan.c-1229-    zt_scan_req_t *pscan_req;
+src/nic/scan.c-1230-    zt_s32 rst;
+src/nic/scan.c-1231-
+src/nic/scan.c-1232-    SCAN_DBG();
+src/nic/scan.c-1233-
+src/nic/scan.c-1234-    if (pnic_info == NULL || ZT_CANNOT_RUN(pnic_info))
+src/nic/scan.c-1235-    {
+src/nic/scan.c-1236-        return -1;
+src/nic/scan.c-1237-    }
+src/nic/scan.c-1238-
+src/nic/scan.c-1239-
+src/nic/scan.c-1240-    if (!pnic_info->is_up)
+src/nic/scan.c-1241-    {
+src/nic/scan.c-1242-        return -2;
+src/nic/scan.c-1243-    }
+src/nic/scan.c-1244-    pscan_info = pnic_info->scan_info;
+src/nic/scan.c-1245-    pmsg_que = &pscan_info->msg_que;
+src/nic/scan.c-1246-
+src/nic/scan.c-1247-    /* debug dump */
+src/nic/scan.c-1248-    {
+src/nic/scan.c-1249-        zt_s8 *bssid_str = zt_kzalloc(20);
+src/nic/scan.c-1250-        zt_s8 *ssid_str = zt_kzalloc(ZT_SCAN_REQ_SSID_NUM * sizeof(ssids[0]));
+src/nic/scan.c-1251-        zt_s8 *ch_str = zt_kzalloc(20 * 3 + 1);
+src/nic/scan.c-1252-        zt_u8 i;
+src/nic/scan.c-1253-        /* bssid */
+src/nic/scan.c-1254-        if (bssid && zt_80211_is_valid_bssid(bssid))
+src/nic/scan.c-1255-        {
+src/nic/scan.c-1256-            zt_sprintf(bssid_str, ZT_MAC_FMT, ZT_MAC_ARG(bssid));
+src/nic/scan.c-1257-        }
+src/nic/scan.c-1258-        else
+src/nic/scan.c-1259-        {
+src/nic/scan.c-1260-            zt_sprintf(bssid_str, " ");
+src/nic/scan.c-1261-        }
+src/nic/scan.c-1262-        /* ssid */
+src/nic/scan.c-1263-        for (i = 0; i < ssid_num; i++)
+--
+src/nic/scan.c-1348-    SCAN_DBG();
+src/nic/scan.c-1349-
+src/nic/scan.c-1350-    if (!zt_is_scanning(pnic_info))
+src/nic/scan.c-1351-    {
+src/nic/scan.c-1352-        return 0;
+src/nic/scan.c-1353-    }
+src/nic/scan.c-1354-
+src/nic/scan.c-1355-    {
+src/nic/scan.c-1356-        zt_scan_info_t *pscan_info = pnic_info->scan_info;
+src/nic/scan.c-1357-        zt_msg_que_t *pmsg_que = &pscan_info->msg_que;
+src/nic/scan.c:1358:        zt_msg_t *pmsg;
+src/nic/scan.c-1359-        zt_s32 rst;
+src/nic/scan.c-1360-
+src/nic/scan.c-1361-        rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_ABORT, &pmsg);
+src/nic/scan.c-1362-        if (rst)
+src/nic/scan.c-1363-        {
+src/nic/scan.c-1364-            SCAN_WARN("msg new, error code: %d", rst);
+src/nic/scan.c-1365-            return -2;
+src/nic/scan.c-1366-        }
+src/nic/scan.c-1367-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/scan.c-1368-        if (rst)
+src/nic/scan.c-1369-        {
+src/nic/scan.c-1370-            zt_msg_del(pmsg_que, pmsg);
+src/nic/scan.c-1371-            SCAN_WARN("msg push, error code: %d", rst);
+src/nic/scan.c-1372-            return -3;
+src/nic/scan.c-1373-        }
+src/nic/scan.c-1374-    }
+src/nic/scan.c-1375-
+src/nic/scan.c-1376-    return 0;
+src/nic/scan.c-1377-}
+src/nic/scan.c-1378-
+src/nic/scan.c-1379-zt_s32 zt_scan_wait_done(nic_info_st *pnic_info, zt_bool babort, zt_u16 to_ms)
+src/nic/scan.c-1380-{
+src/nic/scan.c-1381-    zt_timer_t timer;
+src/nic/scan.c-1382-
+src/nic/scan.c-1383-    if (pnic_info == NULL || ZT_CANNOT_RUN(pnic_info))
+src/nic/scan.c-1384-    {
+src/nic/scan.c-1385-        return -1;
+src/nic/scan.c-1386-    }
+src/nic/scan.c-1387-
+src/nic/scan.c-1388-    if (!zt_is_scanning(pnic_info))
+src/nic/scan.c-1389-    {
+src/nic/scan.c-1390-        return 0;
+src/nic/scan.c-1391-    }
+src/nic/scan.c-1392-
+src/nic/scan.c-1393-    if (babort)
+--
+src/nic/utility/zt_msg.c-21-/* macro */
+src/nic/utility/zt_msg.c-22-#define MSG_DBG(fmt, ...)       LOG_D("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+src/nic/utility/zt_msg.c-23-#define MSG_ARRAY(data, len)    zt_log_array(data, len)
+src/nic/utility/zt_msg.c-24-#define MSG_WARN(fmt, ...)      LOG_E("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+src/nic/utility/zt_msg.c-25-#define MSG_INFO(fmt, ...)      LOG_I("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+src/nic/utility/zt_msg.c-26-
+src/nic/utility/zt_msg.c-27-/* type */
+src/nic/utility/zt_msg.c-28-
+src/nic/utility/zt_msg.c-29-/* function  */
+src/nic/utility/zt_msg.c-30-
+src/nic/utility/zt_msg.c:31:zt_s32 _msg_pop(zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c-32-{
+src/nic/utility/zt_msg.c-33-    if (pmsg->pque)
+src/nic/utility/zt_msg.c-34-    {
+src/nic/utility/zt_msg.c-35-        if (zt_deque(&pmsg->list, pmsg->pque) == NULL)
+src/nic/utility/zt_msg.c-36-        {
+src/nic/utility/zt_msg.c-37-            MSG_WARN("deque fail !!!!!!!!");
+src/nic/utility/zt_msg.c-38-            return -1;
+src/nic/utility/zt_msg.c-39-        }
+src/nic/utility/zt_msg.c-40-        pmsg->pque = NULL;
+src/nic/utility/zt_msg.c-41-    }
+src/nic/utility/zt_msg.c-42-
+src/nic/utility/zt_msg.c-43-    return 0;
+src/nic/utility/zt_msg.c-44-}
+src/nic/utility/zt_msg.c-45-
+src/nic/utility/zt_msg.c:46:zt_s32 _msg_push(zt_que_t *pque, zt_que_list_t *pos, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c-47-{
+src/nic/utility/zt_msg.c-48-    _msg_pop(pmsg); /* todo: check and leave from orignal queue(free or pend) */
+src/nic/utility/zt_msg.c-49-    pmsg->pque = pque;
+src/nic/utility/zt_msg.c-50-    zt_enque(&pmsg->list, pos, pque);
+src/nic/utility/zt_msg.c-51-
+src/nic/utility/zt_msg.c-52-    return 0;
+src/nic/utility/zt_msg.c-53-}
+src/nic/utility/zt_msg.c-54-
+src/nic/utility/zt_msg.c:55:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
+src/nic/utility/zt_msg.c-56-{
+src/nic/utility/zt_msg.c-57-    zt_que_list_t *plist;
+src/nic/utility/zt_msg.c-58-    zt_s32 rst;
+src/nic/utility/zt_msg.c-59-
+src/nic/utility/zt_msg.c-60-    if (pmsg_que == NULL || pnew_msg == NULL)
+src/nic/utility/zt_msg.c-61-    {
+src/nic/utility/zt_msg.c-62-        return -1;
+src/nic/utility/zt_msg.c-63-    }
+src/nic/utility/zt_msg.c-64-
+src/nic/utility/zt_msg.c-65-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-66-    if (zt_que_is_empty(&pmsg_que->free))
+src/nic/utility/zt_msg.c-67-    {
+src/nic/utility/zt_msg.c-68-        rst = -2;
+src/nic/utility/zt_msg.c-69-        goto exit;
+src/nic/utility/zt_msg.c-70-    }
+src/nic/utility/zt_msg.c-71-    zt_list_for_each(plist, zt_que_list_head(&pmsg_que->free))
+src/nic/utility/zt_msg.c-72-    {
+src/nic/utility/zt_msg.c:73:        zt_msg_t *pmsg = zt_list_entry(plist, zt_msg_t, list);
+src/nic/utility/zt_msg.c-74-        if (pmsg->tag == tag)
+src/nic/utility/zt_msg.c-75-        {
+src/nic/utility/zt_msg.c-76-            rst = _msg_pop(pmsg);
+src/nic/utility/zt_msg.c-77-            *pnew_msg = pmsg;
+src/nic/utility/zt_msg.c-78-            goto exit;
+src/nic/utility/zt_msg.c-79-        }
+src/nic/utility/zt_msg.c-80-    }
+src/nic/utility/zt_msg.c-81-    rst = -3;
+src/nic/utility/zt_msg.c-82-
+src/nic/utility/zt_msg.c-83-exit:
+src/nic/utility/zt_msg.c-84-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-85-    if (rst)
+src/nic/utility/zt_msg.c-86-    {
+src/nic/utility/zt_msg.c-87-        *pnew_msg = NULL;
+src/nic/utility/zt_msg.c-88-    }
+src/nic/utility/zt_msg.c-89-    return rst;
+src/nic/utility/zt_msg.c-90-}
+src/nic/utility/zt_msg.c-91-
+src/nic/utility/zt_msg.c:92:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c-93-{
+src/nic/utility/zt_msg.c-94-    zt_que_list_t *pos;
+src/nic/utility/zt_msg.c-95-    zt_s32 rst;
+src/nic/utility/zt_msg.c-96-
+src/nic/utility/zt_msg.c-97-    if (pmsg_que == NULL || pmsg == NULL)
+src/nic/utility/zt_msg.c-98-    {
+src/nic/utility/zt_msg.c-99-        return -1;
+src/nic/utility/zt_msg.c-100-    }
+src/nic/utility/zt_msg.c-101-
+src/nic/utility/zt_msg.c-102-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-103-    zt_list_for_each_prev(pos, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-104-    {
+src/nic/utility/zt_msg.c:105:        zt_msg_t *pmsg_tmp = zt_list_entry(pos, zt_msg_t, list);
+src/nic/utility/zt_msg.c-106-        /* todo: compare use domain and priority field constitute value
+src/nic/utility/zt_msg.c-107-        in message betwen pend queue and input specified message. */
+src/nic/utility/zt_msg.c-108-        if ((pmsg->tag     | ZT_MSG_TAG_ID_MSK) >=
+src/nic/utility/zt_msg.c-109-                (pmsg_tmp->tag | ZT_MSG_TAG_ID_MSK))
+src/nic/utility/zt_msg.c-110-        {
+src/nic/utility/zt_msg.c-111-            break;
+src/nic/utility/zt_msg.c-112-        }
+src/nic/utility/zt_msg.c-113-    }
+src/nic/utility/zt_msg.c-114-    rst = _msg_push(&pmsg_que->pend, pos, pmsg);
+src/nic/utility/zt_msg.c-115-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-116-
+src/nic/utility/zt_msg.c-117-    return rst;
+src/nic/utility/zt_msg.c-118-}
+src/nic/utility/zt_msg.c-119-
+src/nic/utility/zt_msg.c:120:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c-121-{
+src/nic/utility/zt_msg.c-122-    zt_que_list_t *pos;
+src/nic/utility/zt_msg.c-123-    zt_s32 rst;
+src/nic/utility/zt_msg.c-124-
+src/nic/utility/zt_msg.c-125-    if (pmsg_que == NULL || pmsg == NULL)
+src/nic/utility/zt_msg.c-126-    {
+src/nic/utility/zt_msg.c-127-        return -1;
+src/nic/utility/zt_msg.c-128-    }
+src/nic/utility/zt_msg.c-129-
+src/nic/utility/zt_msg.c-130-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-131-    zt_list_for_each(pos, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-132-    {
+src/nic/utility/zt_msg.c:133:        zt_msg_t *pmsg_tmp = zt_list_entry(pos, zt_msg_t, list);
+src/nic/utility/zt_msg.c-134-        if (ZT_MSG_TAG_DOM(pmsg_tmp->tag) >= ZT_MSG_TAG_DOM(pmsg->tag))
+src/nic/utility/zt_msg.c-135-        {
+src/nic/utility/zt_msg.c-136-            break;
+src/nic/utility/zt_msg.c-137-        }
+src/nic/utility/zt_msg.c-138-    }
+src/nic/utility/zt_msg.c-139-    rst = _msg_push(&pmsg_que->pend, zt_list_prev(pos), pmsg);
+src/nic/utility/zt_msg.c-140-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-141-
+src/nic/utility/zt_msg.c-142-    return rst;
+src/nic/utility/zt_msg.c-143-}
+src/nic/utility/zt_msg.c-144-
+src/nic/utility/zt_msg.c:145:zt_s32 msg_get(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg,
+src/nic/utility/zt_msg.c-146-               zt_bool bpop, zt_bool btail)
+src/nic/utility/zt_msg.c-147-{
+src/nic/utility/zt_msg.c-148-    zt_que_list_t *plist;
+src/nic/utility/zt_msg.c-149-    zt_s32 rst = 0;
+src/nic/utility/zt_msg.c-150-
+src/nic/utility/zt_msg.c-151-    if (pmsg_que == NULL || pmsg == NULL)
+src/nic/utility/zt_msg.c-152-    {
+src/nic/utility/zt_msg.c-153-        return -1;
+src/nic/utility/zt_msg.c-154-    }
+src/nic/utility/zt_msg.c-155-
+src/nic/utility/zt_msg.c-156-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-157-    if (zt_que_is_empty(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-158-    {
+src/nic/utility/zt_msg.c-159-        rst = -2;
+src/nic/utility/zt_msg.c-160-        goto exit;
+src/nic/utility/zt_msg.c-161-    }
+src/nic/utility/zt_msg.c-162-
+src/nic/utility/zt_msg.c-163-    plist = btail ? zt_que_tail(&pmsg_que->pend) : zt_que_head(&pmsg_que->pend);
+src/nic/utility/zt_msg.c:164:    *pmsg = zt_list_entry(plist, zt_msg_t, list);
+src/nic/utility/zt_msg.c-165-    if (bpop)
+src/nic/utility/zt_msg.c-166-    {
+src/nic/utility/zt_msg.c-167-        rst = _msg_pop(*pmsg);
+src/nic/utility/zt_msg.c-168-    }
+src/nic/utility/zt_msg.c-169-
+src/nic/utility/zt_msg.c-170-exit:
+src/nic/utility/zt_msg.c-171-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-172-    if (rst)
+src/nic/utility/zt_msg.c-173-    {
+src/nic/utility/zt_msg.c-174-        *pmsg = NULL;
+src/nic/utility/zt_msg.c-175-    }
+src/nic/utility/zt_msg.c-176-    return rst;
+src/nic/utility/zt_msg.c-177-}
+src/nic/utility/zt_msg.c-178-
+src/nic/utility/zt_msg.c:179:zt_s32 msg_get_dom(zt_msg_que_t *pmsg_que, zt_msg_tag_dom_t dom,
+src/nic/utility/zt_msg.c:180:                   zt_msg_t **pmsg,
+src/nic/utility/zt_msg.c-181-                   zt_bool bpop, zt_bool btail)
+src/nic/utility/zt_msg.c-182-{
+src/nic/utility/zt_msg.c-183-    zt_que_list_t *pos;
+src/nic/utility/zt_msg.c-184-    zt_s32 rst;
+src/nic/utility/zt_msg.c-185-
+src/nic/utility/zt_msg.c-186-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-187-    if (btail)
+src/nic/utility/zt_msg.c-188-    {
+src/nic/utility/zt_msg.c-189-        zt_list_for_each_prev(pos, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-190-        {
+src/nic/utility/zt_msg.c:191:            zt_msg_t *pmsg_tmp = zt_list_entry(pos, zt_msg_t, list);
+src/nic/utility/zt_msg.c-192-            if (ZT_MSG_TAG_DOM(pmsg_tmp->tag) == dom)
+src/nic/utility/zt_msg.c-193-            {
+src/nic/utility/zt_msg.c-194-                rst = bpop ? _msg_pop(pmsg_tmp) : 0;
+src/nic/utility/zt_msg.c-195-                *pmsg = pmsg_tmp;
+src/nic/utility/zt_msg.c-196-                goto exit;
+src/nic/utility/zt_msg.c-197-            }
+src/nic/utility/zt_msg.c-198-        }
+src/nic/utility/zt_msg.c-199-    }
+src/nic/utility/zt_msg.c-200-    else
+src/nic/utility/zt_msg.c-201-    {
+src/nic/utility/zt_msg.c-202-        zt_list_for_each(pos, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-203-        {
+src/nic/utility/zt_msg.c:204:            zt_msg_t *pmsg_tmp = zt_list_entry(pos, zt_msg_t, list);
+src/nic/utility/zt_msg.c-205-            if (ZT_MSG_TAG_DOM(pmsg_tmp->tag) == dom)
+src/nic/utility/zt_msg.c-206-            {
+src/nic/utility/zt_msg.c-207-                rst = bpop ? _msg_pop(pmsg_tmp) : 0;
+src/nic/utility/zt_msg.c-208-                *pmsg = pmsg_tmp;
+src/nic/utility/zt_msg.c-209-                goto exit;
+src/nic/utility/zt_msg.c-210-            }
+src/nic/utility/zt_msg.c-211-        }
+src/nic/utility/zt_msg.c-212-    }
+src/nic/utility/zt_msg.c-213-    rst = -1;
+src/nic/utility/zt_msg.c-214-
+src/nic/utility/zt_msg.c-215-exit :
+src/nic/utility/zt_msg.c-216-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-217-    if (rst)
+src/nic/utility/zt_msg.c-218-    {
+src/nic/utility/zt_msg.c-219-        *pmsg = NULL;
+src/nic/utility/zt_msg.c-220-    }
+src/nic/utility/zt_msg.c-221-    return rst;
+src/nic/utility/zt_msg.c-222-}
+src/nic/utility/zt_msg.c-223-
+src/nic/utility/zt_msg.c:224:zt_s32 zt_msg_del(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+src/nic/utility/zt_msg.c-225-{
+src/nic/utility/zt_msg.c-226-    zt_que_list_t *pos;
+src/nic/utility/zt_msg.c-227-    zt_s32 rst;
+src/nic/utility/zt_msg.c-228-
+src/nic/utility/zt_msg.c-229-    if (pmsg_que == NULL || pmsg == NULL)
+src/nic/utility/zt_msg.c-230-    {
+src/nic/utility/zt_msg.c-231-        return -1;
+src/nic/utility/zt_msg.c-232-    }
+src/nic/utility/zt_msg.c-233-
+src/nic/utility/zt_msg.c-234-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-235-    pos = zt_list_prev(zt_que_list_head(&pmsg_que->free));
+src/nic/utility/zt_msg.c-236-    rst = _msg_push(&pmsg_que->free, pos, pmsg);
+src/nic/utility/zt_msg.c-237-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-238-
+src/nic/utility/zt_msg.c-239-    return rst;
+src/nic/utility/zt_msg.c-240-}
+src/nic/utility/zt_msg.c-241-zt_s32 zt_msg_alloc(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.c:242:                    zt_msg_tag_t tag, zt_u32 size, zt_u8 num)
+src/nic/utility/zt_msg.c-243-{
+src/nic/utility/zt_msg.c-244-    zt_u8 i;
+src/nic/utility/zt_msg.c-245-    for (i = 0; i < num; i++)
+src/nic/utility/zt_msg.c-246-    {
+src/nic/utility/zt_msg.c:247:        zt_msg_t *pmsg = zt_kzalloc(sizeof(zt_msg_t) + size);
+src/nic/utility/zt_msg.c-248-        if (pmsg == NULL)
+src/nic/utility/zt_msg.c-249-        {
+src/nic/utility/zt_msg.c-250-            return -1;
+src/nic/utility/zt_msg.c-251-        }
+src/nic/utility/zt_msg.c-252-        pmsg->pque = NULL;
+src/nic/utility/zt_msg.c-253-        pmsg->alloc_value_size = size;
+src/nic/utility/zt_msg.c-254-        pmsg->tag = tag;
+src/nic/utility/zt_msg.c-255-        pmsg->len = 0;
+src/nic/utility/zt_msg.c-256-        zt_msg_del(pmsg_que, pmsg);
+src/nic/utility/zt_msg.c-257-    }
+src/nic/utility/zt_msg.c-258-
+src/nic/utility/zt_msg.c-259-    return 0;
+src/nic/utility/zt_msg.c-260-}
+src/nic/utility/zt_msg.c-261-
+src/nic/utility/zt_msg.c-262-zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.c-263-{
+src/nic/utility/zt_msg.c-264-    zt_list_t *pos, *pnext;
+src/nic/utility/zt_msg.c-265-
+src/nic/utility/zt_msg.c-266-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-267-    zt_list_for_each_safe(pos, pnext, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-268-    {
+src/nic/utility/zt_msg.c:269:        zt_kfree(zt_list_entry(pos, zt_msg_t, list));
+src/nic/utility/zt_msg.c-270-    }
+src/nic/utility/zt_msg.c-271-
+src/nic/utility/zt_msg.c-272-    zt_list_for_each_safe(pos, pnext, zt_que_list_head(&pmsg_que->free))
+src/nic/utility/zt_msg.c-273-    {
+src/nic/utility/zt_msg.c:274:        zt_kfree(zt_list_entry(pos, zt_msg_t, list));
+src/nic/utility/zt_msg.c-275-    }
+src/nic/utility/zt_msg.c-276-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-277-
+src/nic/utility/zt_msg.c-278-    return 0;
+src/nic/utility/zt_msg.c-279-}
+src/nic/utility/zt_msg.c-280-
+--
+src/nic/utility/zt_msg.h-26-#define ZT_MSG_TAG_DOM_MSK      0xF
+src/nic/utility/zt_msg.h-27-#define ZT_MSG_TAG_PRI_OFS      7
+src/nic/utility/zt_msg.h-28-#define ZT_MSG_TAG_PRI_MSK      0x1F
+src/nic/utility/zt_msg.h-29-#define ZT_MSG_TAG_ID_OFS       0
+src/nic/utility/zt_msg.h-30-#define ZT_MSG_TAG_ID_MSK       0x7F
+src/nic/utility/zt_msg.h-31-#define ZT_MSG_TAG_SET(dom, pri, id) \
+src/nic/utility/zt_msg.h-32-    ((((dom) & ZT_MSG_TAG_DOM_MSK) << ZT_MSG_TAG_DOM_OFS) | \
+src/nic/utility/zt_msg.h-33-     (((pri) & ZT_MSG_TAG_PRI_MSK) << ZT_MSG_TAG_PRI_OFS) | \
+src/nic/utility/zt_msg.h-34-     (((id)  & ZT_MSG_TAG_ID_MSK)  << ZT_MSG_TAG_ID_OFS))
+src/nic/utility/zt_msg.h-35-#define ZT_MSG_TAG_DOM(tag) \
+src/nic/utility/zt_msg.h:36:    ((zt_msg_tag_dom_t)(((tag) >> ZT_MSG_TAG_DOM_OFS) & ZT_MSG_TAG_DOM_MSK))
+src/nic/utility/zt_msg.h-37-#define ZT_MSG_TAG_PRI(tag) \
+src/nic/utility/zt_msg.h:38:    ((zt_msg_tag_pri_t)(((tag) >> ZT_MSG_TAG_PRI_OFS) & ZT_MSG_TAG_PRI_MSK))
+src/nic/utility/zt_msg.h-39-#define ZT_MSG_TAG_ID(tag) \
+src/nic/utility/zt_msg.h:40:    ((zt_msg_tag_id_t)(((tag) >> ZT_MSG_TAG_ID_OFS) & ZT_MSG_TAG_ID_MSK))
+src/nic/utility/zt_msg.h-41-
+src/nic/utility/zt_msg.h-42-/* type */
+src/nic/utility/zt_msg.h-43-typedef struct
+src/nic/utility/zt_msg.h-44-{
+src/nic/utility/zt_msg.h-45-    zt_os_api_lock_t lock;
+src/nic/utility/zt_msg.h-46-    zt_que_t pend;
+src/nic/utility/zt_msg.h-47-    zt_que_t free;
+src/nic/utility/zt_msg.h-48-} zt_msg_que_t;
+src/nic/utility/zt_msg.h-49-
+src/nic/utility/zt_msg.h:50:typedef zt_u16 zt_msg_tag_t;
+src/nic/utility/zt_msg.h:51:typedef zt_u8  zt_msg_tag_dom_t;
+src/nic/utility/zt_msg.h:52:typedef zt_u8  zt_msg_tag_pri_t;
+src/nic/utility/zt_msg.h:53:typedef zt_u8  zt_msg_tag_id_t;
+src/nic/utility/zt_msg.h-54-
+src/nic/utility/zt_msg.h-55-typedef struct
+src/nic/utility/zt_msg.h-56-{
+src/nic/utility/zt_msg.h-57-    zt_que_list_t list;
+src/nic/utility/zt_msg.h-58-    zt_que_t *pque;
+src/nic/utility/zt_msg.h-59-    zt_u32 alloc_value_size;
+src/nic/utility/zt_msg.h:60:    zt_msg_tag_t tag;
+src/nic/utility/zt_msg.h-61-    zt_u32 len;
+src/nic/utility/zt_msg.h-62-    zt_u8 value[0];
+src/nic/utility/zt_msg.h:63:} zt_msg_t;
+src/nic/utility/zt_msg.h-64-
+src/nic/utility/zt_msg.h-65-/* function */
+src/nic/utility/zt_msg.h-66-
+src/nic/utility/zt_msg.h-67-zt_inline static zt_u32 zt_msg_count(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-68-{
+src/nic/utility/zt_msg.h-69-    return pmsg_que->pend.cnt;
+src/nic/utility/zt_msg.h-70-}
+src/nic/utility/zt_msg.h-71-
+src/nic/utility/zt_msg.h-72-zt_inline static zt_bool zt_msg_is_empty(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-73-{
+src/nic/utility/zt_msg.h-74-    return zt_que_is_empty(&pmsg_que->pend);
+src/nic/utility/zt_msg.h-75-}
+src/nic/utility/zt_msg.h-76-
+src/nic/utility/zt_msg.h:77:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag,
+src/nic/utility/zt_msg.h:78:                  zt_msg_t **pnew_msg);
+src/nic/utility/zt_msg.h:79:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h:80:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h:81:zt_s32 msg_get(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg,
+src/nic/utility/zt_msg.h-82-               zt_bool bpop, zt_bool btail);
+src/nic/utility/zt_msg.h-83-
+src/nic/utility/zt_msg.h:84:zt_inline static zt_s32 zt_msg_get(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-85-{
+src/nic/utility/zt_msg.h-86-    return msg_get(pmsg_que, pmsg, zt_false, zt_false);
+src/nic/utility/zt_msg.h-87-}
+src/nic/utility/zt_msg.h-88-
+src/nic/utility/zt_msg.h:89:zt_inline static zt_s32 zt_msg_get_tail(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-90-{
+src/nic/utility/zt_msg.h-91-    return msg_get(pmsg_que, pmsg, zt_false, zt_true);
+src/nic/utility/zt_msg.h-92-}
+src/nic/utility/zt_msg.h-93-
+src/nic/utility/zt_msg.h:94:zt_inline static zt_s32 zt_msg_pop(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-95-{
+src/nic/utility/zt_msg.h-96-    return msg_get(pmsg_que, pmsg, zt_true, zt_false);
+src/nic/utility/zt_msg.h-97-}
+src/nic/utility/zt_msg.h-98-
+src/nic/utility/zt_msg.h:99:zt_inline static zt_s32 zt_msg_pop_tail(zt_msg_que_t *pmsg_que, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-100-{
+src/nic/utility/zt_msg.h-101-    return msg_get(pmsg_que, pmsg, zt_true, zt_true);
+src/nic/utility/zt_msg.h-102-}
+src/nic/utility/zt_msg.h-103-
+src/nic/utility/zt_msg.h:104:zt_s32 msg_get_dom(zt_msg_que_t *pmsg_que, zt_msg_tag_dom_t dom,
+src/nic/utility/zt_msg.h:105:                   zt_msg_t **pmsg,
+src/nic/utility/zt_msg.h-106-                   zt_bool bpop, zt_bool btail);
+src/nic/utility/zt_msg.h-107-
+src/nic/utility/zt_msg.h-108-zt_inline static
+src/nic/utility/zt_msg.h-109-zt_s32 zt_msg_get_dom(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h:110:                      zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-111-{
+src/nic/utility/zt_msg.h-112-    return msg_get_dom(pmsg_que, dom, pmsg, zt_false, zt_false);
+src/nic/utility/zt_msg.h-113-}
+src/nic/utility/zt_msg.h-114-
+src/nic/utility/zt_msg.h-115-zt_inline static
+src/nic/utility/zt_msg.h-116-zt_s32 zt_msg_get_dom_tail(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h:117:                           zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-118-{
+src/nic/utility/zt_msg.h-119-    return msg_get_dom(pmsg_que, dom, pmsg, zt_false, zt_true);
+src/nic/utility/zt_msg.h-120-}
+src/nic/utility/zt_msg.h-121-
+src/nic/utility/zt_msg.h-122-zt_inline static
+src/nic/utility/zt_msg.h-123-zt_s32 zt_msg_pop_dom(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h:124:                      zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-125-{
+src/nic/utility/zt_msg.h-126-    return msg_get_dom(pmsg_que, dom, pmsg, zt_true, zt_false);
+src/nic/utility/zt_msg.h-127-}
+src/nic/utility/zt_msg.h-128-
+src/nic/utility/zt_msg.h-129-zt_inline static
+src/nic/utility/zt_msg.h-130-zt_s32 zt_msg_pop_dom_tail(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h:131:                           zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-132-{
+src/nic/utility/zt_msg.h-133-    return msg_get_dom(pmsg_que, dom, pmsg, zt_true, zt_true);
+src/nic/utility/zt_msg.h-134-}
+src/nic/utility/zt_msg.h-135-
+src/nic/utility/zt_msg.h:136:zt_s32 zt_msg_del(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h-137-zt_s32 zt_msg_alloc(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h:138:                    zt_msg_tag_t tag, zt_u32 size, zt_u8 num);
+src/nic/utility/zt_msg.h-139-zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que);
+src/nic/utility/zt_msg.h-140-
+src/nic/utility/zt_msg.h-141-zt_inline static void zt_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-142-{
+src/nic/utility/zt_msg.h-143-    zt_os_api_lock_init(&pmsg_que->lock, ZT_LOCK_TYPE_IRQ);
+src/nic/utility/zt_msg.h-144-    zt_que_init(&pmsg_que->pend, ZT_LOCK_TYPE_NONE);
+src/nic/utility/zt_msg.h-145-    zt_que_init(&pmsg_que->free, ZT_LOCK_TYPE_NONE);
+src/nic/utility/zt_msg.h-146-}
+src/nic/utility/zt_msg.h-147-
+src/nic/utility/zt_msg.h-148-zt_inline static void zt_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-149-{
+src/nic/utility/zt_msg.h-150-    zt_msg_free(pmsg_que);
+src/nic/utility/zt_msg.h-151-    zt_os_api_lock_term(&pmsg_que->lock);
+src/nic/utility/zt_msg.h-152-    zt_que_deinit(&pmsg_que->pend);
+src/nic/utility/zt_msg.h-153-    zt_que_deinit(&pmsg_que->free);
+src/nic/utility/zt_msg.h-154-}
+src/nic/utility/zt_msg.h-155-
+src/nic/utility/zt_msg.h-156-#endif
+src/nic/utility/zt_msg.h-157-
+--
+src/nic/wlan_mgmt.c-881-
+src/nic/wlan_mgmt.c-882-    return 0;
+src/nic/wlan_mgmt.c-883-}
+src/nic/wlan_mgmt.c-884-
+src/nic/wlan_mgmt.c-885-static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
+src/nic/wlan_mgmt.c-886-{
+src/nic/wlan_mgmt.c-887-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-888-    pwr_info_st *pwr_info = pnic_info->pwr_info;
+src/nic/wlan_mgmt.c-889-    zt_wlan_mgmt_scan_que_t *pscan_que = &pwlan_mgmt_info->scan_que;
+src/nic/wlan_mgmt.c-890-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c:891:    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-892-    zt_bool uninstalling = zt_false;
+src/nic/wlan_mgmt.c-893-    zt_s32 rst;
+src/nic/wlan_mgmt.c-894-
+src/nic/wlan_mgmt.c-895-    zt_os_api_thread_enter_hook(pwlan_mgmt_info->tid);
+src/nic/wlan_mgmt.c-896-
+src/nic/wlan_mgmt.c-897-    while (zt_os_api_thread_wait_stop(pwlan_mgmt_info->tid) == zt_false)
+src/nic/wlan_mgmt.c-898-    {
+src/nic/wlan_mgmt.c-899-        zt_msleep(1);
+src/nic/wlan_mgmt.c-900-
+src/nic/wlan_mgmt.c-901-        /* wait new message */
+src/nic/wlan_mgmt.c-902-        while (!zt_msg_pop(pmsg_que, &pmsg))
+src/nic/wlan_mgmt.c-903-        {
+src/nic/wlan_mgmt.c-904-            if (pwr_info->bInSuspend || uninstalling)
+src/nic/wlan_mgmt.c-905-            {
+src/nic/wlan_mgmt.c-906-                break;
+src/nic/wlan_mgmt.c-907-            }
+src/nic/wlan_mgmt.c-908-
+src/nic/wlan_mgmt.c-909-            switch (pmsg->tag)
+src/nic/wlan_mgmt.c-910-            {
+src/nic/wlan_mgmt.c-911-                case ZT_WLAN_MGMT_TAG_BEACON_FRAME :
+src/nic/wlan_mgmt.c-912-                case ZT_WLAN_MGMT_TAG_PROBERSP_FRAME :
+src/nic/wlan_mgmt.c-913-                {
+src/nic/wlan_mgmt.c-914-                    rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-915-                    zt_u16 frm_msg_len = pmsg->len;
+src/nic/wlan_mgmt.c-916-                    zt_wlan_mgmt_scan_que_node_t *pnew_node;
+src/nic/wlan_mgmt.c-917-
+src/nic/wlan_mgmt.c-918-                    rst = wlan_mgmt_scan_que_node_new(pnic_info, &pnew_node);
+src/nic/wlan_mgmt.c-919-                    if (rst)
+src/nic/wlan_mgmt.c-920-                    {
+src/nic/wlan_mgmt.c-921-                        WLAN_MGMT_DBG("new node fail, error code: %d", rst);
+src/nic/wlan_mgmt.c-922-                        break;
+src/nic/wlan_mgmt.c-923-                    }
+src/nic/wlan_mgmt.c-924-
+src/nic/wlan_mgmt.c-925-                    rst = wlan_mgmt_scan_node_info(pnic_info,
+src/nic/wlan_mgmt.c-926-                                                   pfrm_msg, frm_msg_len,
+--
+src/nic/wlan_mgmt.c-1049-
+src/nic/wlan_mgmt.c-1050-static phy_status_st *get_phy_status(prx_pkt_t ppkt)
+src/nic/wlan_mgmt.c-1051-{
+src/nic/wlan_mgmt.c-1052-    /* todo: some received manage frame may no contain phy_status filed,
+src/nic/wlan_mgmt.c-1053-    judge by pkt_info.phy_status, if true mains contain phy status, otherwise
+src/nic/wlan_mgmt.c-1054-    phy_status is invalid */
+src/nic/wlan_mgmt.c-1055-    return ppkt->pkt_info.phy_status ? &ppkt->phy_status : NULL;
+src/nic/wlan_mgmt.c-1056-}
+src/nic/wlan_mgmt.c-1057-
+src/nic/wlan_mgmt.c-1058-static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
+src/nic/wlan_mgmt.c:1059:                           zt_msg_tag_t tag,
+src/nic/wlan_mgmt.c-1060-                           phy_status_st *phy_sta,
+src/nic/wlan_mgmt.c-1061-                           zt_80211_mgmt_t *pmgmt, zt_u32 mgmt_len)
+src/nic/wlan_mgmt.c-1062-{
+src/nic/wlan_mgmt.c-1063-    zt_msg_que_t *pmsg_que;
+src/nic/wlan_mgmt.c:1064:    zt_msg_t *pmsg = NULL;
+src/nic/wlan_mgmt.c-1065-    rx_frm_msg_t *prx_frm_msg;
+src/nic/wlan_mgmt.c-1066-    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+src/nic/wlan_mgmt.c-1067-    zt_u32 value_size;
+src/nic/wlan_mgmt.c-1068-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1069-
+src/nic/wlan_mgmt.c-1070-    if (pwlan_mgmt_info == NULL || pmgmt == NULL || mgmt_len == 0)
+src/nic/wlan_mgmt.c-1071-    {
+src/nic/wlan_mgmt.c-1072-        return -1;
+src/nic/wlan_mgmt.c-1073-    }
+src/nic/wlan_mgmt.c-1074-
+src/nic/wlan_mgmt.c-1075-    pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1076-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c-1077-    if (rst)
+src/nic/wlan_mgmt.c-1078-    {
+src/nic/wlan_mgmt.c-1079-        WLAN_MGMT_DBG("msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1080-        return -1;
+src/nic/wlan_mgmt.c-1081-    }
+src/nic/wlan_mgmt.c-1082-
+src/nic/wlan_mgmt.c-1083-    if (pmsg == NULL || pmsg->alloc_value_size < frame_offset ||
+src/nic/wlan_mgmt.c-1084-            mgmt_len > pmsg->alloc_value_size - frame_offset)
+src/nic/wlan_mgmt.c-1085-    {
+src/nic/wlan_mgmt.c-1086-        WLAN_MGMT_ERROR("frame size(%u) exceeds message capacity(%u)",
+src/nic/wlan_mgmt.c-1087-                        mgmt_len, pmsg ? pmsg->alloc_value_size : 0);
+src/nic/wlan_mgmt.c-1088-        if (pmsg != NULL)
+src/nic/wlan_mgmt.c-1089-        {
+src/nic/wlan_mgmt.c-1090-            zt_msg_del(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-1091-        }
+src/nic/wlan_mgmt.c-1092-        return -2;
+src/nic/wlan_mgmt.c-1093-    }
+src/nic/wlan_mgmt.c-1094-
+src/nic/wlan_mgmt.c-1095-    value_size = frame_offset + mgmt_len;
+src/nic/wlan_mgmt.c-1096-    prx_frm_msg = (rx_frm_msg_t *)pmsg->value;
+src/nic/wlan_mgmt.c-1097-    pmsg->len = value_size;
+src/nic/wlan_mgmt.c-1098-
+src/nic/wlan_mgmt.c-1099-    if (phy_sta)
+--
+src/nic/wlan_mgmt.c-1404-                         sizeof(scan_que_refresh_msg_t), 2) ||
+src/nic/wlan_mgmt.c-1405-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET,
+src/nic/wlan_mgmt.c-1406-                         sizeof(chip_reset_msg_t), 2)) ? -1 : 0;
+src/nic/wlan_mgmt.c-1407-}
+src/nic/wlan_mgmt.c-1408-
+src/nic/wlan_mgmt.c-1409-zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+src/nic/wlan_mgmt.c-1410-{
+src/nic/wlan_mgmt.c-1411-    zt_msg_deinit(&pwlan_mgmt_info->msg_que);
+src/nic/wlan_mgmt.c-1412-}
+src/nic/wlan_mgmt.c-1413-
+src/nic/wlan_mgmt.c:1414:zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
+src/nic/wlan_mgmt.c-1415-{
+src/nic/wlan_mgmt.c-1416-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1417-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c:1418:    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1419-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1420-
+src/nic/wlan_mgmt.c-1421-    /* new message entity */
+src/nic/wlan_mgmt.c-1422-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c-1423-    if (rst)
+src/nic/wlan_mgmt.c-1424-    {
+src/nic/wlan_mgmt.c-1425-        WLAN_MGMT_WARN("msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1426-        return -1;
+src/nic/wlan_mgmt.c-1427-    }
+src/nic/wlan_mgmt.c-1428-
+src/nic/wlan_mgmt.c-1429-    /* new message entity */
+src/nic/wlan_mgmt.c-1430-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-1431-    if (rst)
+src/nic/wlan_mgmt.c-1432-    {
+src/nic/wlan_mgmt.c-1433-        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1434-        return -2;
+src/nic/wlan_mgmt.c-1435-    }
+src/nic/wlan_mgmt.c-1436-
+src/nic/wlan_mgmt.c-1437-    return 0;
+src/nic/wlan_mgmt.c-1438-}
+src/nic/wlan_mgmt.c-1439-
+src/nic/wlan_mgmt.c-1440-zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.c-1441-                                     zt_u8 *pch, zt_u8 ch_num)
+src/nic/wlan_mgmt.c-1442-{
+src/nic/wlan_mgmt.c-1443-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1444-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c:1445:    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1446-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1447-
+src/nic/wlan_mgmt.c-1448-    if (pnic_info == NULL || pch == NULL)
+src/nic/wlan_mgmt.c-1449-    {
+src/nic/wlan_mgmt.c-1450-        WLAN_MGMT_ERROR("null point");
+src/nic/wlan_mgmt.c-1451-        return -1;
+src/nic/wlan_mgmt.c-1452-    }
+src/nic/wlan_mgmt.c-1453-
+src/nic/wlan_mgmt.c-1454-    if (ch_num == 0 || ch_num > ZT_FIELD_SIZEOF(scan_que_refresh_msg_t, ch_map))
+src/nic/wlan_mgmt.c-1455-    {
+src/nic/wlan_mgmt.c-1456-        WLAN_MGMT_WARN("invalid channel number %d", ch_num);
+src/nic/wlan_mgmt.c-1457-        return -2;
+src/nic/wlan_mgmt.c-1458-    }
+src/nic/wlan_mgmt.c-1459-
+src/nic/wlan_mgmt.c-1460-    /* new message entity */
+src/nic/wlan_mgmt.c-1461-    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH, &pmsg);
+src/nic/wlan_mgmt.c-1462-    if (rst)
+src/nic/wlan_mgmt.c-1463-    {
+src/nic/wlan_mgmt.c-1464-        WLAN_MGMT_WARN("refresh msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1465-        return -3;
+src/nic/wlan_mgmt.c-1466-    }
+src/nic/wlan_mgmt.c-1467-
+src/nic/wlan_mgmt.c-1468-    /* load value */
+src/nic/wlan_mgmt.c-1469-    if (sizeof(scan_que_refresh_msg_t) > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c-1470-    {
+src/nic/wlan_mgmt.c-1471-        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c-1472-        return -4;
+src/nic/wlan_mgmt.c-1473-    }
+src/nic/wlan_mgmt.c-1474-    {
+src/nic/wlan_mgmt.c-1475-        scan_que_refresh_msg_t *ptr = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-1476-        ptr->ch_num = ch_num;
+src/nic/wlan_mgmt.c-1477-        zt_memcpy(ptr->ch_map, pch, ch_num);
+src/nic/wlan_mgmt.c-1478-    }
+src/nic/wlan_mgmt.c-1479-
+src/nic/wlan_mgmt.c-1480-    /* new message entity */
+--
+src/nic/wlan_mgmt.c-1485-        return -5;
+src/nic/wlan_mgmt.c-1486-    }
+src/nic/wlan_mgmt.c-1487-
+src/nic/wlan_mgmt.c-1488-    return 0;
+src/nic/wlan_mgmt.c-1489-}
+src/nic/wlan_mgmt.c-1490-
+src/nic/wlan_mgmt.c-1491-zt_s32 zt_wlan_mgmt_chip_reset(nic_info_st *pnic_info, zt_u8 cmd)
+src/nic/wlan_mgmt.c-1492-{
+src/nic/wlan_mgmt.c-1493-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1494-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c:1495:    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1496-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1497-
+src/nic/wlan_mgmt.c-1498-    if (pnic_info == NULL)
+src/nic/wlan_mgmt.c-1499-    {
+src/nic/wlan_mgmt.c-1500-        WLAN_MGMT_ERROR("null point");
+src/nic/wlan_mgmt.c-1501-        return -1;
+src/nic/wlan_mgmt.c-1502-    }
+src/nic/wlan_mgmt.c-1503-
+src/nic/wlan_mgmt.c-1504-    /* new message entity */
+src/nic/wlan_mgmt.c-1505-    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET, &pmsg);
+src/nic/wlan_mgmt.c-1506-    if (rst)
+src/nic/wlan_mgmt.c-1507-    {
+src/nic/wlan_mgmt.c-1508-        WLAN_MGMT_WARN("reset msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1509-        return -2;
+src/nic/wlan_mgmt.c-1510-    }
+src/nic/wlan_mgmt.c-1511-
+src/nic/wlan_mgmt.c-1512-    /* load value */
+src/nic/wlan_mgmt.c-1513-    if (sizeof(chip_reset_msg_t) > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c-1514-    {
+src/nic/wlan_mgmt.c-1515-        WLAN_MGMT_ERROR("msg->value length(%d) error", pmsg->alloc_value_size);
+src/nic/wlan_mgmt.c-1516-        return -3;
+src/nic/wlan_mgmt.c-1517-    }
+src/nic/wlan_mgmt.c-1518-    {
+src/nic/wlan_mgmt.c-1519-        chip_reset_msg_t *ptr = (void *)pmsg->value;
+src/nic/wlan_mgmt.c-1520-        ptr->cmd = cmd;
+src/nic/wlan_mgmt.c-1521-    }
+src/nic/wlan_mgmt.c-1522-
+src/nic/wlan_mgmt.c-1523-    /* new message entity */
+src/nic/wlan_mgmt.c-1524-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-1525-    if (rst)
+src/nic/wlan_mgmt.c-1526-    {
+src/nic/wlan_mgmt.c-1527-        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1528-        return -4;
+src/nic/wlan_mgmt.c-1529-    }
+src/nic/wlan_mgmt.c-1530-
+--
+src/nic/wlan_mgmt.c-1583-    if (pwlan_mgmt_info == NULL)
+src/nic/wlan_mgmt.c-1584-    {
+src/nic/wlan_mgmt.c-1585-        WLAN_MGMT_ERROR("null point");
+src/nic/wlan_mgmt.c-1586-        return 0;
+src/nic/wlan_mgmt.c-1587-    }
+src/nic/wlan_mgmt.c-1588-
+src/nic/wlan_mgmt.c-1589-    WLAN_MGMT_INFO();
+src/nic/wlan_mgmt.c-1590-
+src/nic/wlan_mgmt.c-1591-    {
+src/nic/wlan_mgmt.c-1592-        zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c:1593:        zt_msg_t *pnew_msg;
+src/nic/wlan_mgmt.c-1594-        zt_s32 rst;
+src/nic/wlan_mgmt.c-1595-
+src/nic/wlan_mgmt.c-1596-        rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, &pnew_msg);
+src/nic/wlan_mgmt.c-1597-        if (rst)
+src/nic/wlan_mgmt.c-1598-        {
+src/nic/wlan_mgmt.c-1599-            WLAN_MGMT_ERROR("new message fail, error code: %d", rst);
+src/nic/wlan_mgmt.c-1600-        }
+src/nic/wlan_mgmt.c-1601-        zt_msg_push(pmsg_que, pnew_msg);
+src/nic/wlan_mgmt.c-1602-    }
+src/nic/wlan_mgmt.c-1603-
+src/nic/wlan_mgmt.c-1604-    /* destory thread */
+src/nic/wlan_mgmt.c-1605-    if (pwlan_mgmt_info->tid)
+src/nic/wlan_mgmt.c-1606-    {
+src/nic/wlan_mgmt.c-1607-        zt_os_api_thread_destory(pwlan_mgmt_info->tid);
+src/nic/wlan_mgmt.c-1608-        pwlan_mgmt_info->tid = 0;
+src/nic/wlan_mgmt.c-1609-    }
+src/nic/wlan_mgmt.c-1610-
+src/nic/wlan_mgmt.c-1611-    /* free wlan info */
+src/nic/wlan_mgmt.c-1612-    wlan_mgmt_scan_que_deinit(pnic_info);
+src/nic/wlan_mgmt.c-1613-    wlan_mgmt_msg_deinit(pwlan_mgmt_info);
+src/nic/wlan_mgmt.c-1614-    zt_kfree(pwlan_mgmt_info);
+src/nic/wlan_mgmt.c-1615-    pnic_info->wlan_mgmt_info = NULL;
+src/nic/wlan_mgmt.c-1616-
+src/nic/wlan_mgmt.c-1617-    return 0;
+src/nic/wlan_mgmt.c-1618-}
+src/nic/wlan_mgmt.c-1619-
+src/nic/wlan_mgmt.c-1620-void zt_wlan_set_cur_ssid(nic_info_st *pnic_info, zt_wlan_ssid_t *pssid)
+src/nic/wlan_mgmt.c-1621-{
+src/nic/wlan_mgmt.c-1622-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1623-
+src/nic/wlan_mgmt.c-1624-    zt_memcpy(&pwlan_mgmt_info->cur_network.ssid, pssid, sizeof(zt_wlan_ssid_t));
+src/nic/wlan_mgmt.c-1625-    pwlan_mgmt_info->cur_network.ssid.data[pwlan_mgmt_info->cur_network.ssid.length]
+src/nic/wlan_mgmt.c-1626-        = '\0';
+src/nic/wlan_mgmt.c-1627-}
+src/nic/wlan_mgmt.c-1628-
+--
+src/nic/wlan_mgmt.h-259-typedef enum
+src/nic/wlan_mgmt.h-260-{
+src/nic/wlan_mgmt.h-261-    ZT_WLAN_MGMT_SCAN_QUE_FOR_RST_END,
+src/nic/wlan_mgmt.h-262-    ZT_WLAN_MGMT_SCAN_QUE_FOR_RST_BREAK,
+src/nic/wlan_mgmt.h-263-    ZT_WLAN_MGMT_SCAN_QUE_FOR_RST_FAIL = -1,
+src/nic/wlan_mgmt.h-264-} zt_wlan_mgmt_scan_que_for_rst_e;
+src/nic/wlan_mgmt.h-265-
+src/nic/wlan_mgmt.h-266-/* function declaration */
+src/nic/wlan_mgmt.h-267-
+src/nic/wlan_mgmt.h-268-zt_s32 zt_wlan_mgmt_rx_frame(void *ptr);
+src/nic/wlan_mgmt.h:269:zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag);
+src/nic/wlan_mgmt.h-270-zt_inline static zt_s32 zt_wlan_mgmt_scan_que_flush(nic_info_st *pnic_info)
+src/nic/wlan_mgmt.h-271-{
+src/nic/wlan_mgmt.h-272-    return zt_wlan_mgmt_send_msg(pnic_info, ZT_WLAN_MGMT_TAG_SCAN_QUE_FLUSH);
+src/nic/wlan_mgmt.h-273-}
+src/nic/wlan_mgmt.h-274-zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.h-275-                                     zt_u8 *pch, zt_u8 ch_num);
+src/nic/wlan_mgmt.h-276-zt_s32 zt_wlan_mgmt_chip_reset(nic_info_st *pnic_info, zt_u8 type);
+src/nic/wlan_mgmt.h-277-zt_s32 zt_wlan_mgmt_init(nic_info_st *nic_info);
+src/nic/wlan_mgmt.h-278-zt_s32 zt_wlan_mgmt_term(nic_info_st *nic_info);
+src/nic/wlan_mgmt.h-279-zt_s32 zt_wlan_mgmt_scan_que_read_try(zt_wlan_mgmt_scan_que_t *pscan_que);
+src/nic/wlan_mgmt.h-280-zt_s32 zt_wlan_mgmt_scan_que_read_post(zt_wlan_mgmt_scan_que_t *pscan_que);
+src/nic/wlan_mgmt.h-281-zt_inline static
+src/nic/wlan_mgmt.h-282-zt_bool zt_wlan_is_same_ssid(zt_wlan_ssid_t *pssid1, zt_wlan_ssid_t *pssid2)
+src/nic/wlan_mgmt.h-283-{
+src/nic/wlan_mgmt.h-284-    return (zt_bool)(pssid1->length == pssid2->length &&
+src/nic/wlan_mgmt.h-285-                     !zt_memcmp(pssid1->data, pssid2->data, pssid1->length));
+src/nic/wlan_mgmt.h-286-}
+src/nic/wlan_mgmt.h-287-void zt_wlan_set_cur_ssid(nic_info_st *pnic_info, zt_wlan_ssid_t *pssid);
+src/nic/wlan_mgmt.h-288-zt_wlan_ssid_t *zt_wlan_get_cur_ssid(nic_info_st *pnic_info);
+src/nic/wlan_mgmt.h-289-void zt_wlan_set_cur_bssid(nic_info_st *pnic_info,  zt_u8 *bssid);
+src/nic/wlan_mgmt.h-290-zt_u8 *zt_wlan_get_cur_bssid(nic_info_st *pnic_info);
+src/nic/wlan_mgmt.h-291-void zt_wlan_set_cur_channel(nic_info_st *pnic_info, zt_u8 channel);
+src/nic/wlan_mgmt.h-292-zt_u8 zt_wlan_get_cur_channel(nic_info_st *pnic_info);
+src/nic/wlan_mgmt.h-293-void zt_wlan_set_cur_bw(nic_info_st *pnic_info, CHANNEL_WIDTH bw);
+src/nic/wlan_mgmt.h-294-CHANNEL_WIDTH zt_wlan_get_cur_bw(nic_info_st *pnic_info);
+src/nic/wlan_mgmt.h-295-zt_s32 zt_wlan_get_max_rate(nic_info_st *pnic_info, zt_u8 *mac,
+src/nic/wlan_mgmt.h-296-                            zt_u16 *max_rate);
+src/nic/wlan_mgmt.h-297-zt_s32 zt_wlan_get_signal_and_qual(nic_info_st *pnic_info, zt_u8 *qual,
+src/nic/wlan_mgmt.h-298-                                   zt_u8 *level);
+src/nic/wlan_mgmt.h-299-
+src/nic/wlan_mgmt.h-300-
+src/nic/wlan_mgmt.h-301-enum WIFI_FRAME_TYPE
+src/nic/wlan_mgmt.h-302-{
+src/nic/wlan_mgmt.h-303-    WIFI_MGT_TYPE = (0),
+src/nic/wlan_mgmt.h-304-    WIFI_CTRL_TYPE = (ZT_BIT(2)),
+
+=== MESSAGE ALLOCATOR IMPLEMENTATION ===
+q.txt-277-src/nic/wlan_mgmt.c-1029-    zt_u32 mgmt_len;
+q.txt-278-src/nic/wlan_mgmt.c-1030-    wdn_net_info_st *pwdn_info;
+q.txt-279-src/nic/wlan_mgmt.c-1031-    zt_80211_frame_e frm_type;
+q.txt-280-src/nic/wlan_mgmt.c-1032-    zt_s32 rst;
+q.txt-281-src/nic/wlan_mgmt.c-1033-
+q.txt-282---
+q.txt-283-src/nic/wlan_mgmt.c-1277-
+q.txt-284-src/nic/wlan_mgmt.c-1278-    return 0;
+q.txt-285-src/nic/wlan_mgmt.c-1279-}
+q.txt-286-src/nic/wlan_mgmt.c-1280-
+q.txt-287-src/nic/wlan_mgmt.c-1281-static zt_s32 wlan_mgmt_msg_init(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+q.txt-288-src/nic/wlan_mgmt.c-1282-{
+q.txt-289-src/nic/wlan_mgmt.c-1283-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+q.txt-290-src/nic/wlan_mgmt.c-1284-
+q.txt-291-src/nic/wlan_mgmt.c-1285-    zt_msg_init(pmsg_que);
+q.txt:292:src/nic/wlan_mgmt.c-1286-    return (zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_BEACON_FRAME,
+q.txt-293-src/nic/wlan_mgmt.c:1287:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+q.txt-294-src/nic/wlan_mgmt.c-1288-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+q.txt:295:src/nic/wlan_mgmt.c-1289-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBERSP_FRAME,
+q.txt-296-src/nic/wlan_mgmt.c:1290:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+q.txt-297-src/nic/wlan_mgmt.c-1291-                         ZT_80211_MGMT_PROBERSP_SIZE_MAX, 8) ||
+q.txt:298:src/nic/wlan_mgmt.c-1292-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBEREQ_P2P,
+q.txt-299-src/nic/wlan_mgmt.c:1293:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+q.txt-300-src/nic/wlan_mgmt.c-1294-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+q.txt:301:src/nic/wlan_mgmt.c-1295-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_ACTION,
+q.txt-302-src/nic/wlan_mgmt.c:1296:                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+q.txt-303-src/nic/wlan_mgmt.c-1297-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+q.txt:304:src/nic/wlan_mgmt.c-1298-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_FLUSH, 0, 1) ||
+q.txt:305:src/nic/wlan_mgmt.c-1299-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, 0, 1) ||
+q.txt:306:src/nic/wlan_mgmt.c-1300-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH,
+q.txt-307-src/nic/wlan_mgmt.c-1301-                         sizeof(scan_que_refresh_msg_t), 2) ||
+q.txt:308:src/nic/wlan_mgmt.c-1302-            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET,
+q.txt-309-src/nic/wlan_mgmt.c-1303-                         sizeof(chip_reset_msg_t), 2)) ? -1 : 0;
+q.txt-310-src/nic/wlan_mgmt.c-1304-}
+q.txt-311-src/nic/wlan_mgmt.c-1305-
+q.txt-312-src/nic/wlan_mgmt.c-1306-zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+q.txt-313-src/nic/wlan_mgmt.c-1307-{
+q.txt-314-src/nic/wlan_mgmt.c-1308-    zt_msg_deinit(&pwlan_mgmt_info->msg_que);
+q.txt-315-src/nic/wlan_mgmt.c-1309-}
+q.txt-316-src/nic/wlan_mgmt.c-1310-
+q.txt-317-src/nic/wlan_mgmt.c-1311-zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
+q.txt-318-src/nic/wlan_mgmt.c-1312-{
+q.txt-319-src/nic/wlan_mgmt.c-1313-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+q.txt-320-src/nic/wlan_mgmt.c-1314-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+q.txt-321-src/nic/wlan_mgmt.c-1315-    zt_msg_t *pmsg;
+q.txt-322-src/nic/wlan_mgmt.c-1316-    zt_s32 rst;
+q.txt-323-src/nic/wlan_mgmt.c-1317-
+q.txt-324-src/nic/wlan_mgmt.c-1318-    /* new message entity */
+q.txt-325-src/nic/wlan_mgmt.c-1319-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-326-src/nic/wlan_mgmt.c-1320-    if (rst)
+q.txt-327-src/nic/wlan_mgmt.c-1321-    {
+q.txt-328-===== MESSAGE QUEUE ALLOCATION AND CLEANUP =====
+q.txt-329-src/nic/adhoc.c:852:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, &pmsg);
+q.txt-330-src/nic/adhoc.c:858:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-331-src/nic/adhoc.c:892:        rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
+q.txt-332-src/nic/adhoc.c:900:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-333-src/nic/assoc.c:1017:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_RSP, &pmsg);
+q.txt-334-src/nic/assoc.c:1025:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-335-src/nic/assoc.c:1229:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_START, &pmsg);
+q.txt-336-src/nic/assoc.c:1235:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-337-src/nic/assoc.c:1273:        rst = zt_msg_new(pmsg_que, ZT_ASSOC_TAG_ABORT, &pmsg);
+q.txt-338-src/nic/assoc.c:1279:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-339-src/nic/auth.c:770:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_START, &pmsg);
+q.txt-340-src/nic/auth.c:776:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-341-src/nic/auth.c:811:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_ABORT, &pmsg);
+q.txt-342-src/nic/auth.c:817:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-343-src/nic/auth.c:874:        rst = zt_msg_new(pmsg_que, ZT_AUTH_TAG_RSP, &pmsg);
+q.txt-344-src/nic/auth.c:882:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-345-src/nic/lps.c:768:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_LPS, &pmsg);
+q.txt-346-src/nic/lps.c:778:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-347-src/nic/mlme.c:400:                zt_msg_push(pmsg_que, pmsg);
+q.txt-348-src/nic/mlme.c:457:                zt_msg_push(pmsg_que, pmsg);
+q.txt-349-src/nic/mlme.c:517:                zt_msg_push(pmsg_que, pmsg);
+q.txt-350-src/nic/mlme.c:1561:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-351-src/nic/mlme.c:1564:        MLME_WARN("zt_msg_new fail error code: %d", rst);
+q.txt-352-src/nic/mlme.c:1573:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-353-src/nic/mlme.c:1577:        MLME_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-354-src/nic/mlme.c:1632:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN, &pmsg);
+q.txt-355-src/nic/mlme.c:1655:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-356-src/nic/mlme.c:1736:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+q.txt-357-src/nic/mlme.c:1745:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-358-src/nic/mlme.c:1815:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN, &pmsg);
+q.txt-359-src/nic/mlme.c:1846:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-360-src/nic/mlme.c:2226:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN_IBSS, &pmsg);
+q.txt-361-src/nic/mlme.c:2242:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-362-src/nic/scan.c:1294:    rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_START, &pmsg);
+q.txt-363-src/nic/scan.c:1330:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-364-src/nic/scan.c:1361:        rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_ABORT, &pmsg);
+q.txt-365-src/nic/scan.c:1367:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-366-src/nic/scan.c:1433:    zt_msg_free(pmsg_que);
+q.txt-367-src/nic/utility/zt_msg.c:55:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
+q.txt-368-src/nic/utility/zt_msg.c:92:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt-369-src/nic/utility/zt_msg.c:120:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt-370-src/nic/utility/zt_msg.c:253:        pmsg->alloc_value_size = size;
+q.txt-371-src/nic/utility/zt_msg.c:262:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+q.txt-372-src/nic/utility/zt_msg.h:59:    zt_u32 alloc_value_size;
+q.txt-373-src/nic/utility/zt_msg.h:77:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag,
+--
+src/nic/assoc.c-1279-        rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/assoc.c-1280-        if (rst)
+src/nic/assoc.c-1281-        {
+src/nic/assoc.c-1282-            zt_msg_del(pmsg_que, pmsg);
+src/nic/assoc.c-1283-            ASSOC_WARN("msg push fail error fail: %d", rst);
+src/nic/assoc.c-1284-            return -5;
+src/nic/assoc.c-1285-        }
+src/nic/assoc.c-1286-    }
+src/nic/assoc.c-1287-
+src/nic/assoc.c-1288-    return 0;
+src/nic/assoc.c-1289-}
+src/nic/assoc.c-1290-
+src/nic/assoc.c-1291-zt_inline static zt_s32 assoc_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/assoc.c-1292-{
+src/nic/assoc.c-1293-    zt_msg_init(pmsg_que);
+src/nic/assoc.c:1294:    return (zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_RSP, sizeof(assoc_rsp_t), 2) ||
+src/nic/assoc.c:1295:            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_ABORT, 0, 1) ||
+src/nic/assoc.c:1296:            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_START, 0, 1)) ? -1 : 0;
+src/nic/assoc.c-1297-}
+src/nic/assoc.c-1298-
+src/nic/assoc.c-1299-zt_inline static void assoc_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/assoc.c-1300-{
+src/nic/assoc.c-1301-    zt_msg_deinit(pmsg_que);
+src/nic/assoc.c-1302-}
+src/nic/assoc.c-1303-
+src/nic/assoc.c-1304-zt_s32 zt_assoc_init(nic_info_st *pnic_info)
+src/nic/assoc.c-1305-{
+src/nic/assoc.c-1306-    assoc_info_t *passoc_info;
+src/nic/assoc.c-1307-
+src/nic/assoc.c-1308-    if (pnic_info == NULL)
+src/nic/assoc.c-1309-    {
+src/nic/assoc.c-1310-        return -1;
+src/nic/assoc.c-1311-    }
+src/nic/assoc.c-1312-
+src/nic/assoc.c-1313-    ASSOC_DBG();
+src/nic/assoc.c-1314-
+src/nic/assoc.c-1315-    passoc_info = zt_kzalloc(sizeof(assoc_info_t));
+src/nic/assoc.c-1316-    if (passoc_info == NULL)
+src/nic/assoc.c-1317-    {
+src/nic/assoc.c-1318-        ASSOC_ERROR("malloc assoc_info failed");
+src/nic/assoc.c-1319-        return -2;
+src/nic/assoc.c-1320-    }
+src/nic/assoc.c-1321-    pnic_info->assoc_info = passoc_info;
+src/nic/assoc.c-1322-    passoc_info->brun = zt_false;
+src/nic/assoc.c-1323-    if (assoc_msg_init(&passoc_info->msg_que))
+src/nic/assoc.c-1324-    {
+src/nic/assoc.c-1325-        ASSOC_ERROR("assoc msg init failed");
+src/nic/assoc.c-1326-        return -3;
+src/nic/assoc.c-1327-    }
+src/nic/assoc.c-1328-
+src/nic/assoc.c-1329-    return 0;
+src/nic/assoc.c-1330-}
+src/nic/assoc.c-1331-
+src/nic/assoc.c-1332-zt_s32 zt_assoc_term(nic_info_st *pnic_info)
+src/nic/assoc.c-1333-{
+src/nic/assoc.c-1334-    assoc_info_t *passoc_info;
+src/nic/assoc.c-1335-
+src/nic/assoc.c-1336-    if (pnic_info == NULL)
+src/nic/assoc.c-1337-    {
+src/nic/assoc.c-1338-        return 0;
+src/nic/assoc.c-1339-    }
+src/nic/assoc.c-1340-    passoc_info = pnic_info->assoc_info;
+src/nic/assoc.c-1341-
+src/nic/assoc.c-1342-    ASSOC_DBG();
+src/nic/assoc.c-1343-
+src/nic/assoc.c-1344-    if (passoc_info)
+src/nic/assoc.c-1345-    {
+src/nic/assoc.c-1346-        assoc_msg_deinit(&passoc_info->msg_que);
+src/nic/assoc.c-1347-        zt_kfree(passoc_info);
+src/nic/assoc.c-1348-        pnic_info->assoc_info = NULL;
+src/nic/assoc.c-1349-    }
+src/nic/assoc.c-1350-
+src/nic/assoc.c-1351-    return 0;
+src/nic/assoc.c-1352-}
+src/nic/assoc.c-1353-
+--
+src/nic/auth.c-917-            }
+src/nic/auth.c-918-            break;
+src/nic/auth.c-919-#endif
+src/nic/auth.c-920-
+src/nic/auth.c-921-        default :
+src/nic/auth.c-922-            AUTH_WARN("undefined work mode");
+src/nic/auth.c-923-            return -3;
+src/nic/auth.c-924-    }
+src/nic/auth.c-925-
+src/nic/auth.c-926-    return 0;
+src/nic/auth.c-927-}
+src/nic/auth.c-928-
+src/nic/auth.c-929-zt_inline static zt_s32 auth_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/auth.c-930-{
+src/nic/auth.c-931-    zt_msg_init(pmsg_que);
+src/nic/auth.c:932:    return (zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_RSP, sizeof(auth_rsp_t), 2) ||
+src/nic/auth.c:933:            zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_ABORT, 0, 1) ||
+src/nic/auth.c:934:            zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_START, 0, 1)) ? -1 : 0;
+src/nic/auth.c-935-}
+src/nic/auth.c-936-
+src/nic/auth.c-937-zt_inline static void auth_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/auth.c-938-{
+src/nic/auth.c-939-    zt_msg_deinit(pmsg_que);
+src/nic/auth.c-940-}
+src/nic/auth.c-941-
+src/nic/auth.c-942-zt_s32 zt_auth_init(nic_info_st *pnic_info)
+src/nic/auth.c-943-{
+src/nic/auth.c-944-    auth_info_t *pauth_info;
+src/nic/auth.c-945-
+src/nic/auth.c-946-    AUTH_DBG();
+src/nic/auth.c-947-
+src/nic/auth.c-948-    pauth_info = zt_kzalloc(sizeof(auth_info_t));
+src/nic/auth.c-949-    if (pauth_info == NULL)
+src/nic/auth.c-950-    {
+src/nic/auth.c-951-        AUTH_WARN("malloc auth_info failed");
+src/nic/auth.c-952-        return -1;
+src/nic/auth.c-953-    }
+src/nic/auth.c-954-    pnic_info->auth_info = pauth_info;
+src/nic/auth.c-955-
+src/nic/auth.c-956-    if (auth_msg_init(&pauth_info->msg_que))
+src/nic/auth.c-957-    {
+src/nic/auth.c-958-        AUTH_WARN("malloc auth msg failed");
+src/nic/auth.c-959-        return -2;
+src/nic/auth.c-960-    }
+src/nic/auth.c-961-    pauth_info->brun = zt_false;
+src/nic/auth.c-962-
+src/nic/auth.c-963-    return 0;
+src/nic/auth.c-964-}
+src/nic/auth.c-965-
+src/nic/auth.c-966-zt_s32 zt_auth_term(nic_info_st *pnic_info)
+src/nic/auth.c-967-{
+src/nic/auth.c-968-    auth_info_t *pauth_info;
+src/nic/auth.c-969-
+src/nic/auth.c-970-    if (pnic_info == NULL)
+src/nic/auth.c-971-    {
+src/nic/auth.c-972-        return 0;
+src/nic/auth.c-973-    }
+src/nic/auth.c-974-
+src/nic/auth.c-975-    AUTH_DBG();
+src/nic/auth.c-976-
+src/nic/auth.c-977-    pauth_info = pnic_info->auth_info;
+src/nic/auth.c-978-    if (pauth_info)
+src/nic/auth.c-979-    {
+src/nic/auth.c-980-        auth_msg_deinit(&pauth_info->msg_que);
+src/nic/auth.c-981-        zt_kfree(pauth_info);
+src/nic/auth.c-982-        pnic_info->auth_info = NULL;
+src/nic/auth.c-983-    }
+src/nic/auth.c-984-
+src/nic/auth.c-985-    return 0;
+src/nic/auth.c-986-}
+src/nic/auth.c-987-
+src/nic/auth.c-988-static void deauth_wlan_hdr(nic_info_st *pnic_info, struct xmit_buf *pxmit_buf)
+src/nic/auth.c-989-{
+src/nic/auth.c-990-    zt_u8 *pframe;
+src/nic/auth.c-991-    struct wl_ieee80211_hdr *pwlanhdr;
+src/nic/auth.c-992-
+src/nic/auth.c-993-    pframe = pxmit_buf->pbuf + TXDESC_OFFSET;
+src/nic/auth.c-994-    pwlanhdr = (struct wl_ieee80211_hdr *)pframe;
+src/nic/auth.c-995-
+src/nic/auth.c-996-    pwlanhdr->frame_ctl = 0;
+src/nic/auth.c-997-    SetFrameType(pframe, WIFI_MGT_TYPE);
+src/nic/auth.c-998-    SetFrameSubType(pframe, WIFI_DEAUTH);  /* set subtype */
+src/nic/auth.c-999-}
+--
+src/nic/mlme.c-2242-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-2243-    if (rst)
+src/nic/mlme.c-2244-    {
+src/nic/mlme.c-2245-        zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-2246-        MLME_WARN("msg push fail error code: %d", rst);
+src/nic/mlme.c-2247-        return -7;
+src/nic/mlme.c-2248-    }
+src/nic/mlme.c-2249-
+src/nic/mlme.c-2250-    return 0;
+src/nic/mlme.c-2251-}
+src/nic/mlme.c-2252-#endif
+src/nic/mlme.c-2253-
+src/nic/mlme.c-2254-zt_inline static zt_s32 mlme_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/mlme.c-2255-{
+src/nic/mlme.c-2256-    zt_msg_init(pmsg_que);
+src/nic/mlme.c:2257:    return (zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN_ABORT, 0, 2) ||
+src/nic/mlme.c:2258:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN_ABORT, sizeof(mlme_conn_abort_t), 2) ||
+src/nic/mlme.c:2259:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_DEAUTH, sizeof(mlme_deauth_t), 1) ||
+src/nic/mlme.c:2260:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_DEASSOC, sizeof(mlme_deassoc_t), 1) ||
+src/nic/mlme.c:2261:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN, sizeof(mlme_scan_t), 2) ||
+src/nic/mlme.c:2262:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN_RSP, sizeof(mlme_scan_rsp_t), 2) ||
+src/nic/mlme.c:2263:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN, sizeof(mlme_conn_t), 2) ||
+src/nic/mlme.c:2264:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_ADD_BA_REQ, 0, TID_NUM) ||
+src/nic/mlme.c:2265:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_ADD_BA_RSP, sizeof(zt_add_ba_parm_st),
+src/nic/mlme.c-2266-                         TID_NUM) ||
+src/nic/mlme.c-2267-#ifdef CFG_ENABLE_ADHOC_MODE
+src/nic/mlme.c:2268:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN_IBSS, sizeof(mlme_conn_ibss_t), 1) ||
+src/nic/mlme.c:2269:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, 0, 1) ||
+src/nic/mlme.c:2270:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, sizeof(beacon_frame_t),
+src/nic/mlme.c-2271-                         1) ||
+src/nic/mlme.c-2272-#endif
+src/nic/mlme.c-2273-#ifdef CONFIG_LPS
+src/nic/mlme.c:2274:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_LPS, 0, 1) ||
+src/nic/mlme.c-2275-#endif
+src/nic/mlme.c:2276:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_KEEPALIVE, 0, 1)) ? -1 : 0;
+src/nic/mlme.c-2277-}
+src/nic/mlme.c-2278-
+src/nic/mlme.c-2279-zt_inline static void mlme_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/mlme.c-2280-{
+src/nic/mlme.c-2281-    zt_msg_deinit(pmsg_que);
+src/nic/mlme.c-2282-}
+src/nic/mlme.c-2283-
+src/nic/mlme.c-2284-zt_s32 zt_mlme_init(nic_info_st *pnic_info)
+src/nic/mlme.c-2285-{
+src/nic/mlme.c-2286-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-2287-
+src/nic/mlme.c-2288-    MLME_DBG();
+src/nic/mlme.c-2289-
+src/nic/mlme.c-2290-    pmlme_info = zt_kzalloc(sizeof(mlme_info_t));
+src/nic/mlme.c-2291-    if (pmlme_info == NULL)
+src/nic/mlme.c-2292-    {
+src/nic/mlme.c-2293-        MLME_WARN("malloc mlme_info_t failed");
+src/nic/mlme.c-2294-        return -1;
+src/nic/mlme.c-2295-    }
+src/nic/mlme.c-2296-    pnic_info->mlme_info = pmlme_info;
+src/nic/mlme.c-2297-    pmlme_info->parent = pnic_info;
+src/nic/mlme.c-2298-    zt_os_api_lock_init(&pmlme_info->state_lock, ZT_LOCK_TYPE_IRQ);
+src/nic/mlme.c-2299-    zt_os_api_lock_init(&pmlme_info->connect_lock, ZT_LOCK_TYPE_IRQ);
+src/nic/mlme.c-2300-    mlme_set_connect(pnic_info, zt_false);
+src/nic/mlme.c-2301-    pmlme_info->freeze_pend = zt_true;
+src/nic/mlme.c-2302-    mlme_set_state(pnic_info, MLME_STATE_INIT);
+src/nic/mlme.c-2303-    if (mlme_msg_init(&pmlme_info->msg_que))
+src/nic/mlme.c-2304-    {
+src/nic/mlme.c-2305-        MLME_WARN("malloc msg init failed");
+src/nic/mlme.c-2306-        return -2;
+src/nic/mlme.c-2307-    }
+src/nic/mlme.c-2308-    zt_sprintf(pmlme_info->mlmeName, "mlme_%d%d",
+src/nic/mlme.c-2309-               pnic_info->hif_node_id, pnic_info->ndev_id);
+src/nic/mlme.c-2310-
+src/nic/mlme.c-2311-    pmlme_info->tid = zt_os_api_thread_create(pmlme_info->tid,
+src/nic/mlme.c-2312-                      pmlme_info->mlmeName,
+src/nic/mlme.c-2313-                      (void *)mlme_core,
+src/nic/mlme.c-2314-                      pnic_info);
+src/nic/mlme.c-2315-    if (pmlme_info->tid == NULL)
+src/nic/mlme.c-2316-    {
+src/nic/mlme.c-2317-        MLME_WARN("create mlme thread failed");
+src/nic/mlme.c-2318-        return -3;
+src/nic/mlme.c-2319-    }
+src/nic/mlme.c-2320-    zt_os_api_thread_wakeup(pmlme_info->tid);
+src/nic/mlme.c-2321-
+src/nic/mlme.c-2322-    return 0;
+src/nic/mlme.c-2323-}
+src/nic/mlme.c-2324-
+src/nic/mlme.c-2325-zt_s32 zt_mlme_term(nic_info_st *pnic_info)
+src/nic/mlme.c-2326-{
+src/nic/mlme.c-2327-    mlme_info_t *pmlme_info;
+src/nic/mlme.c-2328-
+src/nic/mlme.c-2329-    MLME_DBG();
+src/nic/mlme.c-2330-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-2331-    if (pmlme_info == NULL)
+src/nic/mlme.c-2332-    {
+src/nic/mlme.c-2333-        return -1;
+src/nic/mlme.c-2334-    }
+src/nic/mlme.c-2335-
+src/nic/mlme.c-2336-    zt_mlme_abort(pnic_info);
+src/nic/mlme.c-2337-
+src/nic/mlme.c-2338-    MLME_DBG("destory thread");
+src/nic/mlme.c-2339-    if (pmlme_info->tid)
+src/nic/mlme.c-2340-    {
+src/nic/mlme.c-2341-        zt_os_api_thread_destory(pmlme_info->tid);
+--
+src/nic/scan.c-1412-{
+src/nic/scan.c-1413-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-1414-
+src/nic/scan.c-1415-    if (pnic_info == NULL)
+src/nic/scan.c-1416-    {
+src/nic/scan.c-1417-        return -1;
+src/nic/scan.c-1418-    }
+src/nic/scan.c-1419-    pscan_info = pnic_info->scan_info;
+src/nic/scan.c-1420-
+src/nic/scan.c-1421-    return pscan_info->brun;
+src/nic/scan.c-1422-}
+src/nic/scan.c-1423-
+src/nic/scan.c-1424-zt_inline static zt_s32 scan_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/scan.c-1425-{
+src/nic/scan.c-1426-    zt_msg_init(pmsg_que);
+src/nic/scan.c:1427:    return (zt_msg_alloc(pmsg_que, ZT_SCAN_TAG_ABORT, 0, 1) ||
+src/nic/scan.c:1428:            zt_msg_alloc(pmsg_que, ZT_SCAN_TAG_START, sizeof(zt_scan_req_t), 1)) ? -1 : 0;
+src/nic/scan.c-1429-}
+src/nic/scan.c-1430-
+src/nic/scan.c-1431-zt_inline static void scan_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/scan.c-1432-{
+src/nic/scan.c-1433-    zt_msg_free(pmsg_que);
+src/nic/scan.c-1434-}
+src/nic/scan.c-1435-
+src/nic/scan.c-1436-zt_s32 zt_scan_init(nic_info_st *pnic_info)
+src/nic/scan.c-1437-{
+src/nic/scan.c-1438-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-1439-
+src/nic/scan.c-1440-    if (pnic_info == NULL)
+src/nic/scan.c-1441-    {
+src/nic/scan.c-1442-        return -1;
+src/nic/scan.c-1443-    }
+src/nic/scan.c-1444-
+src/nic/scan.c-1445-    SCAN_DBG();
+src/nic/scan.c-1446-
+src/nic/scan.c-1447-    pscan_info = zt_kzalloc(sizeof(zt_scan_info_t));
+src/nic/scan.c-1448-    if (pscan_info == NULL)
+src/nic/scan.c-1449-    {
+src/nic/scan.c-1450-        SCAN_WARN("malloc scan_param_st failed");
+src/nic/scan.c-1451-        return -2;
+src/nic/scan.c-1452-    }
+src/nic/scan.c-1453-    pnic_info->scan_info = pscan_info;
+src/nic/scan.c-1454-    pscan_info->brun = zt_false;
+src/nic/scan.c-1455-    pscan_info->preq = NULL;
+src/nic/scan.c-1456-    if (scan_msg_init(&pscan_info->msg_que))
+src/nic/scan.c-1457-    {
+src/nic/scan.c-1458-        SCAN_WARN("scan msg init failed");
+src/nic/scan.c-1459-        return -3;
+src/nic/scan.c-1460-    }
+src/nic/scan.c-1461-    zt_os_api_sema_init(&pscan_info->req_lock, 1);
+src/nic/scan.c-1462-
+src/nic/scan.c-1463-    return 0;
+src/nic/scan.c-1464-}
+src/nic/scan.c-1465-
+src/nic/scan.c-1466-zt_s32 zt_scan_term(nic_info_st *pnic_info)
+src/nic/scan.c-1467-{
+src/nic/scan.c-1468-    zt_scan_info_t *pscan_info;
+src/nic/scan.c-1469-
+src/nic/scan.c-1470-    if (pnic_info == NULL)
+src/nic/scan.c-1471-    {
+src/nic/scan.c-1472-        return 0;
+src/nic/scan.c-1473-    }
+src/nic/scan.c-1474-
+src/nic/scan.c-1475-    SCAN_DBG();
+src/nic/scan.c-1476-
+src/nic/scan.c-1477-    pscan_info = pnic_info->scan_info;
+src/nic/scan.c-1478-    if (pscan_info)
+src/nic/scan.c-1479-    {
+src/nic/scan.c-1480-        scan_msg_deinit(&pscan_info->msg_que);
+src/nic/scan.c-1481-        zt_kfree(pscan_info);
+src/nic/scan.c-1482-        pnic_info->scan_info = NULL;
+src/nic/scan.c-1483-    }
+src/nic/scan.c-1484-
+src/nic/scan.c-1485-    return 0;
+src/nic/scan.c-1486-}
+src/nic/scan.c-1487-
+--
+src/nic/utility/zt_msg.c-226-    zt_que_list_t *pos;
+src/nic/utility/zt_msg.c-227-    zt_s32 rst;
+src/nic/utility/zt_msg.c-228-
+src/nic/utility/zt_msg.c-229-    if (pmsg_que == NULL || pmsg == NULL)
+src/nic/utility/zt_msg.c-230-    {
+src/nic/utility/zt_msg.c-231-        return -1;
+src/nic/utility/zt_msg.c-232-    }
+src/nic/utility/zt_msg.c-233-
+src/nic/utility/zt_msg.c-234-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-235-    pos = zt_list_prev(zt_que_list_head(&pmsg_que->free));
+src/nic/utility/zt_msg.c-236-    rst = _msg_push(&pmsg_que->free, pos, pmsg);
+src/nic/utility/zt_msg.c-237-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-238-
+src/nic/utility/zt_msg.c-239-    return rst;
+src/nic/utility/zt_msg.c-240-}
+src/nic/utility/zt_msg.c:241:zt_s32 zt_msg_alloc(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.c-242-                    zt_msg_tag_t tag, zt_u32 size, zt_u8 num)
+src/nic/utility/zt_msg.c-243-{
+src/nic/utility/zt_msg.c-244-    zt_u8 i;
+src/nic/utility/zt_msg.c-245-    for (i = 0; i < num; i++)
+src/nic/utility/zt_msg.c-246-    {
+src/nic/utility/zt_msg.c-247-        zt_msg_t *pmsg = zt_kzalloc(sizeof(zt_msg_t) + size);
+src/nic/utility/zt_msg.c-248-        if (pmsg == NULL)
+src/nic/utility/zt_msg.c-249-        {
+src/nic/utility/zt_msg.c-250-            return -1;
+src/nic/utility/zt_msg.c-251-        }
+src/nic/utility/zt_msg.c-252-        pmsg->pque = NULL;
+src/nic/utility/zt_msg.c-253-        pmsg->alloc_value_size = size;
+src/nic/utility/zt_msg.c-254-        pmsg->tag = tag;
+src/nic/utility/zt_msg.c-255-        pmsg->len = 0;
+src/nic/utility/zt_msg.c-256-        zt_msg_del(pmsg_que, pmsg);
+src/nic/utility/zt_msg.c-257-    }
+src/nic/utility/zt_msg.c-258-
+src/nic/utility/zt_msg.c-259-    return 0;
+src/nic/utility/zt_msg.c-260-}
+src/nic/utility/zt_msg.c-261-
+src/nic/utility/zt_msg.c-262-zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.c-263-{
+src/nic/utility/zt_msg.c-264-    zt_list_t *pos, *pnext;
+src/nic/utility/zt_msg.c-265-
+src/nic/utility/zt_msg.c-266-    zt_os_api_lock_lock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-267-    zt_list_for_each_safe(pos, pnext, zt_que_list_head(&pmsg_que->pend))
+src/nic/utility/zt_msg.c-268-    {
+src/nic/utility/zt_msg.c-269-        zt_kfree(zt_list_entry(pos, zt_msg_t, list));
+src/nic/utility/zt_msg.c-270-    }
+src/nic/utility/zt_msg.c-271-
+src/nic/utility/zt_msg.c-272-    zt_list_for_each_safe(pos, pnext, zt_que_list_head(&pmsg_que->free))
+src/nic/utility/zt_msg.c-273-    {
+src/nic/utility/zt_msg.c-274-        zt_kfree(zt_list_entry(pos, zt_msg_t, list));
+src/nic/utility/zt_msg.c-275-    }
+src/nic/utility/zt_msg.c-276-    zt_os_api_lock_unlock(&pmsg_que->lock);
+src/nic/utility/zt_msg.c-277-
+src/nic/utility/zt_msg.c-278-    return 0;
+src/nic/utility/zt_msg.c-279-}
+src/nic/utility/zt_msg.c-280-
+--
+src/nic/utility/zt_msg.h-122-zt_inline static
+src/nic/utility/zt_msg.h-123-zt_s32 zt_msg_pop_dom(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h-124-                      zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-125-{
+src/nic/utility/zt_msg.h-126-    return msg_get_dom(pmsg_que, dom, pmsg, zt_true, zt_false);
+src/nic/utility/zt_msg.h-127-}
+src/nic/utility/zt_msg.h-128-
+src/nic/utility/zt_msg.h-129-zt_inline static
+src/nic/utility/zt_msg.h-130-zt_s32 zt_msg_pop_dom_tail(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h-131-                           zt_msg_tag_dom_t dom, zt_msg_t **pmsg)
+src/nic/utility/zt_msg.h-132-{
+src/nic/utility/zt_msg.h-133-    return msg_get_dom(pmsg_que, dom, pmsg, zt_true, zt_true);
+src/nic/utility/zt_msg.h-134-}
+src/nic/utility/zt_msg.h-135-
+src/nic/utility/zt_msg.h-136-zt_s32 zt_msg_del(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg);
+src/nic/utility/zt_msg.h:137:zt_s32 zt_msg_alloc(zt_msg_que_t *pmsg_que,
+src/nic/utility/zt_msg.h-138-                    zt_msg_tag_t tag, zt_u32 size, zt_u8 num);
+src/nic/utility/zt_msg.h-139-zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que);
+src/nic/utility/zt_msg.h-140-
+src/nic/utility/zt_msg.h-141-zt_inline static void zt_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-142-{
+src/nic/utility/zt_msg.h-143-    zt_os_api_lock_init(&pmsg_que->lock, ZT_LOCK_TYPE_IRQ);
+src/nic/utility/zt_msg.h-144-    zt_que_init(&pmsg_que->pend, ZT_LOCK_TYPE_NONE);
+src/nic/utility/zt_msg.h-145-    zt_que_init(&pmsg_que->free, ZT_LOCK_TYPE_NONE);
+src/nic/utility/zt_msg.h-146-}
+src/nic/utility/zt_msg.h-147-
+src/nic/utility/zt_msg.h-148-zt_inline static void zt_msg_deinit(zt_msg_que_t *pmsg_que)
+src/nic/utility/zt_msg.h-149-{
+src/nic/utility/zt_msg.h-150-    zt_msg_free(pmsg_que);
+src/nic/utility/zt_msg.h-151-    zt_os_api_lock_term(&pmsg_que->lock);
+src/nic/utility/zt_msg.h-152-    zt_que_deinit(&pmsg_que->pend);
+src/nic/utility/zt_msg.h-153-    zt_que_deinit(&pmsg_que->free);
+src/nic/utility/zt_msg.h-154-}
+src/nic/utility/zt_msg.h-155-
+src/nic/utility/zt_msg.h-156-#endif
+src/nic/utility/zt_msg.h-157-
+--
+src/nic/wlan_mgmt.c-1374-        zt_kfree(zt_list_entry(pque_list, zt_wlan_mgmt_scan_que_node_t, list));
+src/nic/wlan_mgmt.c-1375-    }
+src/nic/wlan_mgmt.c-1376-    zt_que_deinit(&pscan_que->ready);
+src/nic/wlan_mgmt.c-1377-
+src/nic/wlan_mgmt.c-1378-    zt_os_api_lock_term(&pscan_que->lock);
+src/nic/wlan_mgmt.c-1379-    zt_os_api_sema_free(&pscan_que->sema);
+src/nic/wlan_mgmt.c-1380-
+src/nic/wlan_mgmt.c-1381-    return 0;
+src/nic/wlan_mgmt.c-1382-}
+src/nic/wlan_mgmt.c-1383-
+src/nic/wlan_mgmt.c-1384-static zt_s32 wlan_mgmt_msg_init(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+src/nic/wlan_mgmt.c-1385-{
+src/nic/wlan_mgmt.c-1386-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1387-
+src/nic/wlan_mgmt.c-1388-    zt_msg_init(pmsg_que);
+src/nic/wlan_mgmt.c:1389:    return (zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_BEACON_FRAME,
+src/nic/wlan_mgmt.c-1390-                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1391-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c:1392:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBERSP_FRAME,
+src/nic/wlan_mgmt.c-1393-                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1394-                         ZT_80211_MGMT_PROBERSP_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c:1395:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_PROBEREQ_P2P,
+src/nic/wlan_mgmt.c-1396-                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1397-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c:1398:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_ACTION,
+src/nic/wlan_mgmt.c-1399-                         ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm) +
+src/nic/wlan_mgmt.c-1400-                         ZT_80211_MGMT_BEACON_SIZE_MAX, 8) ||
+src/nic/wlan_mgmt.c:1401:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_FLUSH, 0, 1) ||
+src/nic/wlan_mgmt.c:1402:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_UNINSTALL, 0, 1) ||
+src/nic/wlan_mgmt.c:1403:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH,
+src/nic/wlan_mgmt.c-1404-                         sizeof(scan_que_refresh_msg_t), 2) ||
+src/nic/wlan_mgmt.c:1405:            zt_msg_alloc(pmsg_que, ZT_WLAN_MGMT_TAG_CHIPRESET,
+src/nic/wlan_mgmt.c-1406-                         sizeof(chip_reset_msg_t), 2)) ? -1 : 0;
+src/nic/wlan_mgmt.c-1407-}
+src/nic/wlan_mgmt.c-1408-
+src/nic/wlan_mgmt.c-1409-zt_inline static void wlan_mgmt_msg_deinit(zt_wlan_mgmt_info_t *pwlan_mgmt_info)
+src/nic/wlan_mgmt.c-1410-{
+src/nic/wlan_mgmt.c-1411-    zt_msg_deinit(&pwlan_mgmt_info->msg_que);
+src/nic/wlan_mgmt.c-1412-}
+src/nic/wlan_mgmt.c-1413-
+src/nic/wlan_mgmt.c-1414-zt_s32 zt_wlan_mgmt_send_msg(nic_info_st *pnic_info, zt_msg_tag_t tag)
+src/nic/wlan_mgmt.c-1415-{
+src/nic/wlan_mgmt.c-1416-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1417-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1418-    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1419-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1420-
+src/nic/wlan_mgmt.c-1421-    /* new message entity */
+src/nic/wlan_mgmt.c-1422-    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+src/nic/wlan_mgmt.c-1423-    if (rst)
+src/nic/wlan_mgmt.c-1424-    {
+src/nic/wlan_mgmt.c-1425-        WLAN_MGMT_WARN("msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1426-        return -1;
+src/nic/wlan_mgmt.c-1427-    }
+src/nic/wlan_mgmt.c-1428-
+src/nic/wlan_mgmt.c-1429-    /* new message entity */
+src/nic/wlan_mgmt.c-1430-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/wlan_mgmt.c-1431-    if (rst)
+src/nic/wlan_mgmt.c-1432-    {
+src/nic/wlan_mgmt.c-1433-        WLAN_MGMT_WARN("zt_msg_push fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1434-        return -2;
+src/nic/wlan_mgmt.c-1435-    }
+src/nic/wlan_mgmt.c-1436-
+src/nic/wlan_mgmt.c-1437-    return 0;
+src/nic/wlan_mgmt.c-1438-}
+src/nic/wlan_mgmt.c-1439-
+src/nic/wlan_mgmt.c-1440-zt_s32 zt_wlan_mgmt_scan_que_refresh(nic_info_st *pnic_info,
+src/nic/wlan_mgmt.c-1441-                                     zt_u8 *pch, zt_u8 ch_num)
+src/nic/wlan_mgmt.c-1442-{
+src/nic/wlan_mgmt.c-1443-    zt_wlan_mgmt_info_t *pwlan_mgmt_info = pnic_info->wlan_mgmt_info;
+src/nic/wlan_mgmt.c-1444-    zt_msg_que_t *pmsg_que = &pwlan_mgmt_info->msg_que;
+src/nic/wlan_mgmt.c-1445-    zt_msg_t *pmsg;
+src/nic/wlan_mgmt.c-1446-    zt_s32 rst;
+src/nic/wlan_mgmt.c-1447-
+src/nic/wlan_mgmt.c-1448-    if (pnic_info == NULL || pch == NULL)
+src/nic/wlan_mgmt.c-1449-    {
+src/nic/wlan_mgmt.c-1450-        WLAN_MGMT_ERROR("null point");
+src/nic/wlan_mgmt.c-1451-        return -1;
+src/nic/wlan_mgmt.c-1452-    }
+src/nic/wlan_mgmt.c-1453-
+src/nic/wlan_mgmt.c-1454-    if (ch_num == 0 || ch_num > ZT_FIELD_SIZEOF(scan_que_refresh_msg_t, ch_map))
+src/nic/wlan_mgmt.c-1455-    {
+src/nic/wlan_mgmt.c-1456-        WLAN_MGMT_WARN("invalid channel number %d", ch_num);
+src/nic/wlan_mgmt.c-1457-        return -2;
+src/nic/wlan_mgmt.c-1458-    }
+src/nic/wlan_mgmt.c-1459-
+src/nic/wlan_mgmt.c-1460-    /* new message entity */
+src/nic/wlan_mgmt.c-1461-    rst = zt_msg_new(pmsg_que, ZT_WLAN_MGMT_TAG_SCAN_QUE_REFRESH, &pmsg);
+src/nic/wlan_mgmt.c-1462-    if (rst)
+src/nic/wlan_mgmt.c-1463-    {
+src/nic/wlan_mgmt.c-1464-        WLAN_MGMT_WARN("refresh msg new fail error code: %d", rst);
+src/nic/wlan_mgmt.c-1465-        return -3;
+src/nic/wlan_mgmt.c-1466-    }
+src/nic/wlan_mgmt.c-1467-
+src/nic/wlan_mgmt.c-1468-    /* load value */
+src/nic/wlan_mgmt.c-1469-    if (sizeof(scan_que_refresh_msg_t) > pmsg->alloc_value_size)
+src/nic/wlan_mgmt.c-1470-    {
+
+=== MESSAGE ALLOCATOR CALL SITES ===
+   915	                AUTH_WARN("auth_ap_recv fail, error code: %d", rst);
+   916	                return -2;
+   917	            }
+   918	            break;
+   919	#endif
+   920	
+   921	        default :
+   922	            AUTH_WARN("undefined work mode");
+   923	            return -3;
+   924	    }
+   925	
+   926	    return 0;
+   927	}
+   928	
+   929	zt_inline static zt_s32 auth_msg_init(zt_msg_que_t *pmsg_que)
+   930	{
+   931	    zt_msg_init(pmsg_que);
+   932	    return (zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_RSP, sizeof(auth_rsp_t), 2) ||
+   933	            zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_ABORT, 0, 1) ||
+   934	            zt_msg_alloc(pmsg_que, ZT_AUTH_TAG_START, 0, 1)) ? -1 : 0;
+   935	}
+   936	
+   937	zt_inline static void auth_msg_deinit(zt_msg_que_t *pmsg_que)
+   938	{
+   939	    zt_msg_deinit(pmsg_que);
+   940	}
+   941	
+   942	zt_s32 zt_auth_init(nic_info_st *pnic_info)
+   943	{
+   944	    auth_info_t *pauth_info;
+   945	
+  1280	        if (rst)
+  1281	        {
+  1282	            zt_msg_del(pmsg_que, pmsg);
+  1283	            ASSOC_WARN("msg push fail error fail: %d", rst);
+  1284	            return -5;
+  1285	        }
+  1286	    }
+  1287	
+  1288	    return 0;
+  1289	}
+  1290	
+  1291	zt_inline static zt_s32 assoc_msg_init(zt_msg_que_t *pmsg_que)
+  1292	{
+  1293	    zt_msg_init(pmsg_que);
+  1294	    return (zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_RSP, sizeof(assoc_rsp_t), 2) ||
+  1295	            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_ABORT, 0, 1) ||
+  1296	            zt_msg_alloc(pmsg_que, ZT_ASSOC_TAG_START, 0, 1)) ? -1 : 0;
+  1297	}
+  1298	
+  1299	zt_inline static void assoc_msg_deinit(zt_msg_que_t *pmsg_que)
+  1300	{
+  1301	    zt_msg_deinit(pmsg_que);
+  1302	}
+  1303	
+  1304	zt_s32 zt_assoc_init(nic_info_st *pnic_info)
+  1305	{
+  1306	    assoc_info_t *passoc_info;
+  1307	
+  1308	    if (pnic_info == NULL)
+  1309	    {
+  1310	        return -1;
+
+=== MLME MESSAGE QUEUE INITIALIZATION ===
+q.txt-346-src/nic/lps.c:778:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-347-src/nic/mlme.c:400:                zt_msg_push(pmsg_que, pmsg);
+q.txt-348-src/nic/mlme.c:457:                zt_msg_push(pmsg_que, pmsg);
+q.txt-349-src/nic/mlme.c:517:                zt_msg_push(pmsg_que, pmsg);
+q.txt-350-src/nic/mlme.c:1561:    rst = zt_msg_new(pmsg_que, tag, &pmsg);
+q.txt-351-src/nic/mlme.c:1564:        MLME_WARN("zt_msg_new fail error code: %d", rst);
+q.txt-352-src/nic/mlme.c:1573:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-353-src/nic/mlme.c:1577:        MLME_WARN("zt_msg_push fail error code: %d", rst);
+q.txt-354-src/nic/mlme.c:1632:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN, &pmsg);
+q.txt-355-src/nic/mlme.c:1655:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt:356:src/nic/mlme.c:1736:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+q.txt-357-src/nic/mlme.c:1745:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-358-src/nic/mlme.c:1815:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN, &pmsg);
+q.txt-359-src/nic/mlme.c:1846:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-360-src/nic/mlme.c:2226:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_CONN_IBSS, &pmsg);
+q.txt-361-src/nic/mlme.c:2242:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-362-src/nic/scan.c:1294:    rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_START, &pmsg);
+q.txt-363-src/nic/scan.c:1330:    rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-364-src/nic/scan.c:1361:        rst = zt_msg_new(pmsg_que, ZT_SCAN_TAG_ABORT, &pmsg);
+q.txt-365-src/nic/scan.c:1367:        rst = zt_msg_push(pmsg_que, pmsg);
+q.txt-366-src/nic/scan.c:1433:    zt_msg_free(pmsg_que);
+q.txt-367-src/nic/utility/zt_msg.c:55:zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
+q.txt-368-src/nic/utility/zt_msg.c:92:zt_s32 zt_msg_push(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt-369-src/nic/utility/zt_msg.c:120:zt_s32 zt_msg_push_head(zt_msg_que_t *pmsg_que, zt_msg_t *pmsg)
+q.txt-370-src/nic/utility/zt_msg.c:253:        pmsg->alloc_value_size = size;
+q.txt-371-src/nic/utility/zt_msg.c:262:zt_s32 zt_msg_free(zt_msg_que_t *pmsg_que)
+--
+src/nic/mlme.c-362-                    pmlme_info->conn_res.reason_code = ZT_80211_REASON_UNSPECIFIED;
+src/nic/mlme.c-363-                }
+src/nic/mlme.c-364-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-365-
+src/nic/mlme.c-366-                MLME_INFO("abort scanning...");
+src/nic/mlme.c-367-                zt_scan_stop(pnic_info);
+src/nic/mlme.c-368-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-369-                *prsn = -4;
+src/nic/mlme.c-370-                PT_EXIT(pt);
+src/nic/mlme.c-371-            }
+src/nic/mlme.c:372:            else if (pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+src/nic/mlme.c-373-            {
+src/nic/mlme.c-374-                pmgmt = (void *)pmsg->value;
+src/nic/mlme.c-375-                mgmt_len = pmsg->len;
+src/nic/mlme.c-376-
+src/nic/mlme.c-377-                rst = set_cur_network(pnic_info, pmgmt, mgmt_len);
+src/nic/mlme.c-378-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-379-                if (rst)
+src/nic/mlme.c-380-                {
+src/nic/mlme.c-381-                    MLME_WARN("set cur_network fail, error code: %d", rst);
+src/nic/mlme.c-382-                    pmlme_info->conn_res.local_disconn = zt_true;
+src/nic/mlme.c-383-                    pmlme_info->conn_res.reason_code = ZT_80211_REASON_UNSPECIFIED;
+src/nic/mlme.c-384-                    zt_scan_stop(pnic_info);
+src/nic/mlme.c-385-                    PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, &rst));
+src/nic/mlme.c-386-                    *prsn = -5;
+src/nic/mlme.c-387-                    PT_EXIT(pt);
+--
+src/nic/mlme.c-692-        *prsn = -2;
+src/nic/mlme.c-693-        PT_EXIT(pt);
+src/nic/mlme.c-694-    }
+src/nic/mlme.c-695-
+src/nic/mlme.c-696-    PT_INIT(pt_sub);
+src/nic/mlme.c-697-    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, prsn)))
+src/nic/mlme.c-698-    {
+src/nic/mlme.c-699-        if (!zt_msg_get(pmsg_que, &pmsg))
+src/nic/mlme.c-700-        {
+src/nic/mlme.c-701-            if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT ||
+src/nic/mlme.c:702:                    pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+src/nic/mlme.c-703-            {
+src/nic/mlme.c-704-                zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-705-                MLME_DBG("abort scanning...");
+src/nic/mlme.c-706-                zt_scan_stop(pnic_info);
+src/nic/mlme.c-707-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, prsn));
+src/nic/mlme.c-708-                break;
+src/nic/mlme.c-709-            }
+src/nic/mlme.c-710-            else if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
+src/nic/mlme.c-711-                     pmsg->tag == ZT_MLME_TAG_DEAUTH ||
+src/nic/mlme.c-712-                     pmsg->tag == ZT_MLME_TAG_DEASSOC)
+src/nic/mlme.c-713-            {
+src/nic/mlme.c-714-                zt_scan_stop(pnic_info);
+src/nic/mlme.c-715-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, prsn));
+src/nic/mlme.c-716-                break;
+src/nic/mlme.c-717-            }
+--
+src/nic/mlme.c-1242-        }
+src/nic/mlme.c-1243-
+src/nic/mlme.c-1244-        if (pnic_info->is_surprise_removed)
+src/nic/mlme.c-1245-        {
+src/nic/mlme.c-1246-            *prsn = -1;
+src/nic/mlme.c-1247-            PT_EXIT(pt);
+src/nic/mlme.c-1248-        }
+src/nic/mlme.c-1249-
+src/nic/mlme.c-1250-        if (!zt_msg_pop(pmsg_que, &pmsg))
+src/nic/mlme.c-1251-        {
+src/nic/mlme.c:1252:            if (pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+src/nic/mlme.c-1253-            {
+src/nic/mlme.c-1254-                zt_80211_mgmt_t *pmgmt = (void *)pmsg->value;
+src/nic/mlme.c-1255-                zt_u16 mgmt_len = pmsg->len;
+src/nic/mlme.c-1256-                zt_bool privacy;
+src/nic/mlme.c-1257-
+src/nic/mlme.c-1258-                privacy = !!(pmgmt->probe_resp.capab & ZT_80211_MGMT_CAPAB_PRIVACY);
+src/nic/mlme.c-1259-                if (ZT_80211_CAPAB_IS_IBSS(pmgmt->probe_resp.capab) && privacy == zt_false)
+src/nic/mlme.c-1260-                {
+src/nic/mlme.c-1261-                    rst = set_cur_network(pnic_info, pmgmt, mgmt_len);
+src/nic/mlme.c-1262-                    if (rst)
+src/nic/mlme.c-1263-                    {
+src/nic/mlme.c-1264-                        MLME_WARN("set cur_network fail, error code: %d", rst);
+src/nic/mlme.c-1265-                    }
+src/nic/mlme.c-1266-                    else
+src/nic/mlme.c-1267-                    {
+--
+src/nic/mlme.c-1726-
+src/nic/mlme.c-1727-    if (!zt_is_scanning(pnic_info))
+src/nic/mlme.c-1728-    {
+src/nic/mlme.c-1729-        return -3;
+src/nic/mlme.c-1730-    }
+src/nic/mlme.c-1731-    pmlme_info = pnic_info->mlme_info;
+src/nic/mlme.c-1732-    pmsg_que = &pmlme_info->msg_que;
+src/nic/mlme.c-1733-
+src/nic/mlme.c-1734-    MLME_DBG();
+src/nic/mlme.c-1735-
+src/nic/mlme.c:1736:    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_SCAN_RSP, &pmsg);
+src/nic/mlme.c-1737-    if (rst)
+src/nic/mlme.c-1738-    {
+src/nic/mlme.c-1739-        MLME_WARN("msg new fail error code: %d", rst);
+src/nic/mlme.c-1740-        return -4;
+src/nic/mlme.c-1741-    }
+src/nic/mlme.c-1742-    /* copy frame */
+src/nic/mlme.c-1743-    pmsg->len = mgmt_len;
+src/nic/mlme.c-1744-    zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+src/nic/mlme.c-1745-    rst = zt_msg_push(pmsg_que, pmsg);
+src/nic/mlme.c-1746-    if (rst)
+src/nic/mlme.c-1747-    {
+src/nic/mlme.c-1748-        zt_msg_del(pmsg_que, pmsg);
+src/nic/mlme.c-1749-        MLME_WARN("msg push fail error code: %d", rst);
+src/nic/mlme.c-1750-        return -5;
+src/nic/mlme.c-1751-    }
+--
+src/nic/mlme.c-2252-#endif
+src/nic/mlme.c-2253-
+src/nic/mlme.c-2254-zt_inline static zt_s32 mlme_msg_init(zt_msg_que_t *pmsg_que)
+src/nic/mlme.c-2255-{
+src/nic/mlme.c-2256-    zt_msg_init(pmsg_que);
+src/nic/mlme.c-2257-    return (zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN_ABORT, 0, 2) ||
+src/nic/mlme.c-2258-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN_ABORT, sizeof(mlme_conn_abort_t), 2) ||
+src/nic/mlme.c-2259-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_DEAUTH, sizeof(mlme_deauth_t), 1) ||
+src/nic/mlme.c-2260-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_DEASSOC, sizeof(mlme_deassoc_t), 1) ||
+src/nic/mlme.c-2261-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN, sizeof(mlme_scan_t), 2) ||
+src/nic/mlme.c:2262:            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_SCAN_RSP, sizeof(mlme_scan_rsp_t), 2) ||
+src/nic/mlme.c-2263-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN, sizeof(mlme_conn_t), 2) ||
+src/nic/mlme.c-2264-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_ADD_BA_REQ, 0, TID_NUM) ||
+src/nic/mlme.c-2265-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_ADD_BA_RSP, sizeof(zt_add_ba_parm_st),
+src/nic/mlme.c-2266-                         TID_NUM) ||
+src/nic/mlme.c-2267-#ifdef CFG_ENABLE_ADHOC_MODE
+src/nic/mlme.c-2268-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_CONN_IBSS, sizeof(mlme_conn_ibss_t), 1) ||
+src/nic/mlme.c-2269-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_IBSS_LEAVE, 0, 1) ||
+src/nic/mlme.c-2270-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, sizeof(beacon_frame_t),
+src/nic/mlme.c-2271-                         1) ||
+src/nic/mlme.c-2272-#endif
+src/nic/mlme.c-2273-#ifdef CONFIG_LPS
+src/nic/mlme.c-2274-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_LPS, 0, 1) ||
+src/nic/mlme.c-2275-#endif
+src/nic/mlme.c-2276-            zt_msg_alloc(pmsg_que, ZT_MLME_TAG_KEEPALIVE, 0, 1)) ? -1 : 0;
+src/nic/mlme.c-2277-}
+--
+src/nic/mlme.h-27-    ZT_MLME_FRAMEWORK_WEXT,
+src/nic/mlme.h-28-    ZT_MLME_FRAMEWORK_NETLINK,
+src/nic/mlme.h-29-    ZT_MLME_FRAMEWORK_NDIS,
+src/nic/mlme.h-30-    ZT_MLME_FRAMEWORK_NONE,
+src/nic/mlme.h-31-} zt_mlme_framework_e;
+src/nic/mlme.h-32-
+src/nic/mlme.h-33-enum
+src/nic/mlme.h-34-{
+src/nic/mlme.h-35-    /* priority level 0 */
+src/nic/mlme.h-36-    ZT_MLME_TAG_SCAN_ABORT      = ZT_MSG_TAG_SET(0, 0, 0),
+src/nic/mlme.h:37:    ZT_MLME_TAG_SCAN_RSP,
+src/nic/mlme.h-38-    ZT_MLME_TAG_IBSS_LEAVE,
+src/nic/mlme.h-39-    ZT_MLME_TAG_IBSS_BEACON_FRAME,
+src/nic/mlme.h-40-    ZT_MLME_TAG_CONN_ABORT,
+src/nic/mlme.h-41-    ZT_MLME_TAG_DEAUTH,
+src/nic/mlme.h-42-    ZT_MLME_TAG_DEASSOC,
+src/nic/mlme.h-43-
+src/nic/mlme.h-44-    /* priority level 1 */
+src/nic/mlme.h-45-    ZT_MLME_TAG_SCAN            = ZT_MSG_TAG_SET(0, 1, 0),
+src/nic/mlme.h-46-    ZT_MLME_TAG_CONN,
+src/nic/mlme.h-47-    ZT_MLME_TAG_CONN_IBSS,
+src/nic/mlme.h-48-
+src/nic/mlme.h-49-    /* priority level 2 */
+src/nic/mlme.h-50-    ZT_MLME_TAG_ADD_BA_REQ      = ZT_MSG_TAG_SET(0, 2, 0),
+src/nic/mlme.h-51-    ZT_MLME_TAG_ADD_BA_RSP,
+src/nic/mlme.h-52-    ZT_MLME_TAG_KEEPALIVE,
+
+=== KEY PARAMETER STRUCTURE ===
+    35	
+    36	#define CFG80211_DBG(fmt, ...)      LOG_D("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+    37	#define CFG80211_ARRAY(data, len)   zt_log_array(data, len)
+    38	#define CFG80211_INFO(fmt, ...)     LOG_I("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+    39	#define CFG80211_WARN(fmt, ...)     LOG_W("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+    40	#define CFG80211_ERROR(fmt, ...)    LOG_E("[%s:%d]"fmt, __func__, __LINE__, ##__VA_ARGS__)
+    41	
+    42	#define ZT_80211_CRYPT_ALG_NAME_LEN     16
+    43	
+    44	#define SET_CFG80211_REPORT_MGMT(w, t, v)   (w->report_mgmt |= (v ? ZT_BIT(t >> 4) : 0))
+    45	#define GET_CFG80211_REPORT_MGMT(w, t)      ((w->report_mgmt & ZT_BIT(t >> 4)) > 0)
+    46	#define CLR_CFG80211_REPORT_MGMT(w, t, v)   (w->report_mgmt &= (~ ZT_BIT(t >> 4)))
+    47	
+    48	struct cfg80211_crypt
+    49	{
+    50	    zt_80211_addr_t sta_addr;
+    51	    zt_u32 alg;
+    52	    zt_u8 set_tx;
+    53	    zt_u8 idx;
+    54	    zt_u16 key_len;
+    55	    zt_u8 key[0];
+    56	} ;
+    57	
+    58	zt_s32 zt_cfg80211_p2p_rx_mgmt(void *nic_info, void *param, zt_u32 param_len);
+    59	zt_s32 zt_cfg80211_remain_on_channel_expired(void *nic, void *param,
+    60	        zt_u32 param_len);
+    61	zt_s32 zt_cfg80211_p2p_ready_on_channel(void *nic_info, void *param,
+    62	                                        zt_u32 param_len);
+    63	
+    64	zt_s8 *cfg80211_frame_to_str(zt_80211_frame_e type)
+    65	{
+    66	    switch (type)
+    67	    {
+    68	        case ZT_80211_FRM_ASSOC_REQ          :
+    69	        {
+    70	            return to_str(ZT_80211_FRM_ASSOC_REQ);
+    71	        }
+    72	        case ZT_80211_FRM_ASSOC_RESP         :
+    73	        {
+    74	            return to_str(ZT_80211_FRM_ASSOC_RESP);
+    75	        }
+   700	            }
+   701	        }
+   702	
+   703	        pwdn_info->ieee8021x_blocked = zt_false;
+   704	        pwdn_info->state = E_WDN_AP_STATE_8021X_UNBLOCK;
+   705	    }
+   706	
+   707	exit:
+   708	    return res;
+   709	}
+   710	#endif
+   711	static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
+   712	        struct cfg80211_crypt *param, zt_u32 param_len)
+   713	{
+   714	    ndev_priv_st *pndev_priv = netdev_priv(dev);
+   715	    nic_info_st *pnic_info = pndev_priv->nic;
+   716	    sec_info_st *psec_info = pnic_info->sec_info;
+   717	    wdn_net_info_st *pwdn_info;
+   718	    zt_s32 res = 0;
+   719	
+   720	    CFG80211_DBG();
+   721	
+   722	    if (param_len !=
+   723	            ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len)
+   724	    {
+   725	        CFG80211_WARN("param_len invalid !!!!!!!");
+   726	        res = -EINVAL;
+   727	        goto exit;
+   728	    }
+   729	
+   730	    if (zt_80211_is_bcast_addr(param->sta_addr))
+   731	    {
+   732	        if (param->idx >= ZT_80211_WEP_KEYS)
+   733	        {
+   734	            res = -EINVAL;
+   735	            goto exit;
+   736	        }
+   737	    }
+   738	    else
+   739	    {
+   740	        res = -EINVAL;
+   741	        goto exit;
+   742	    }
+   743	
+   744	    if (pnic_info->is_driver_critical)
+   745	    {
+   746	        CFG80211_WARN("driver enter crital");
+   747	        res = -EINVAL;
+   748	        goto exit;
+   749	    }
+   750	
+   751	    if (psec_info->dot11AuthAlgrthm == dot11AuthAlgrthm_8021X) /* 802_1x */
+   752	    {
+   753	        local_info_st *plocal_info = pnic_info->local_info;
+   754	        if (plocal_info->work_mode == ZT_INFRA_MODE) /* sta mode */
+   755	        {
+   756	            pwdn_info = zt_wdn_find_info(pnic_info,
+   757	                                         zt_wlan_get_cur_bssid(pnic_info));
+   758	            if (pwdn_info == NULL)
+   759	            {
+   760	                CFG80211_WARN("pwdn_info NULL !!!!!!");
+   761	                goto exit;
+   762	            }
+   763	
+   764	            if (param->alg != IW_ENCODE_ALG_NONE)
+   765	            {
+   766	                pwdn_info->ieee8021x_blocked = zt_false;
+   767	            }
+   768	
+   769	            if (psec_info->ndisencryptstatus == zt_ndis802_11Encryption2Enabled ||
+   770	                    psec_info->ndisencryptstatus == zt_ndis802_11Encryption3Enabled)
+   771	            {
+   772	                pwdn_info->dot118021XPrivacy = psec_info->dot11PrivacyAlgrthm;
+   773	            }
+   774	            CFG80211_DBG("pwdn_info->dot118021XPrivacy = %d", pwdn_info->dot118021XPrivacy);
+   775	
+   776	            zt_mcu_set_sec_cfg(pnic_info,
+   777	                               psec_info->dot11AuthAlgrthm == dot11AuthAlgrthm_8021X ? 0xcf : 0xcc);
+   778	
+   779	            /* PTK: param->u.crypt.key */
+   780	            if (param->set_tx == 1) /* pairwise key */
+   781	            {
+   782	                CFG80211_DBG("set unicastkey");
+   783	                /* KCK PTK0~127 */
+   784	                zt_memcpy(pwdn_info->dot118021x_UncstKey.skey, param->key,
+   785	                          min_t(zt_u16, param->key_len, 16));
+   786	
+   787	                if (param->alg == WLAN_CIPHER_SUITE_TKIP) /* set mic key */
+   788	                {
+   789	                    /* KEK PTK128~255 */
+   790	                    zt_memcpy(pwdn_info->dot11tkiptxmickey.skey,
+   791	                              &(param->key[16]), 8); /* PTK128~191 */
+   792	                    zt_memcpy(pwdn_info->dot11tkiprxmickey.skey,
+   793	                              &(param->key[24]), 8); /* PTK192~255 */
+   794	                    psec_info->busetkipkey = zt_true;
+   795	                }
+   796	                if (param->alg == WLAN_CIPHER_SUITE_CCMP)
+   797	                {
+   798	                    CFG80211_DBG("sta_hw_set_unicast_key");
+   799	                    zt_sec_sta_set_unicast_key(pnic_info, &pwdn_info->unicast_cam_id,
+   800	                                               pwdn_info->dot118021XPrivacy,
+   801	                                               pwdn_info->mac, pwdn_info->dot118021x_UncstKey.skey);
+   802	                }
+   803	            }
+   804	            else /* group key */
+   805	            {
+   806	                CFG80211_DBG("set groupkey");
+   807	                zt_memcpy(psec_info->dot118021XGrpKey[param->idx].skey,
+   808	                          param->key,
+   809	                          min_t(zt_u16, param->key_len, 16));
+   810	
+   811	                zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
+   812	                          &param->key, 8);
+   813	                zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
+   814	                          &param->key[8], 8);
+   815	                psec_info->binstallGrpkey = true;
+   816	                psec_info->dot118021XGrpKeyid = param->idx;
+   817	                if (psec_info->dot118021XGrpPrivacy == _AES_)
+   818	                {
+   819	                    CFG80211_DBG("sta_hw_set_group_key");
+   820	                    zt_sec_sta_set_group_key(pnic_info, &pwdn_info->group_cam_id, pwdn_info->bssid);
+   821	                }
+   822	
+   823	                if (zt_p2p_is_valid(pnic_info))
+   824	                {
+   825	                    p2p_info_st *p2p_info = pnic_info->p2p;
+   826	                    CFG80211_INFO("state:%s", zt_p2p_state_to_str(p2p_info->p2p_state));
+   827	                    if (p2p_info->p2p_state == P2P_STATE_GONEGO_OK)
+   828	                    {
+   829	                        zt_p2p_set_state(p2p_info, P2P_STATE_EAPOL_DONE);
+   830	                        zt_p2p_nego_timer_set(pnic_info, P2P_EAPOL_NEGO_TIME);
+   890	static inline void set_wiphy_pirv(struct wiphy *pwiphy, void *priv)
+   891	{
+   892	    *(void **)wiphy_priv(pwiphy) = priv;
+   893	}
+   894	
+   895	static zt_s32 _add_key_cb(struct wiphy *wiphy, struct net_device *ndev,
+   896	/*TODO: android #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 119))*/
+   897	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+   898	                          int link_id,
+   899	#endif
+   900	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+   901	                          zt_u8 key_index, bool pairwise,
+   902	                          const zt_u8 *mac_addr,
+   903	#else
+   904	                          zt_u8 key_index, const zt_u8 *mac_addr,
+   905	#endif
+   906	                          struct key_params *params)
+   907	{
+   908	    ndev_priv_st *pndev_priv = netdev_priv(ndev);
+   909	    nic_info_st *pnic_info = pndev_priv->nic;
+   910	    zt_u32 param_len;
+   911	    struct cfg80211_crypt *param = NULL;
+   912	    zt_s32 res = 0;
+   913	
+   914	    CFG80211_INFO("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
+   915	
+   916	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+   917	    CFG80211_DBG("pairwise=%d\n", pairwise);
+   918	#endif
+   919	
+   920	    if (pnic_info->is_driver_critical)
+   921	    {
+   922	        CFG80211_WARN("driver enter crital");
+   923	        return -EINVAL;
+   924	    }
+   925	
+   926	    param_len = ZT_OFFSETOF(struct cfg80211_crypt, key) + params->key_len;
+   927	    param = (struct cfg80211_crypt *)zt_kzalloc(param_len);
+   928	    if (param == NULL)
+   929	    {
+   930	        res = -EPERM;
+   931	        goto exit;
+   932	    }
+   933	    zt_memset(param, 0, param_len);
+   934	
+   935	    zt_memset(param->sta_addr, 0xff, ETH_ALEN);
+   936	
+   937	    param->alg = params->cipher;
+   938	
+   939	    if (mac_addr == NULL || zt_80211_is_bcast_addr(mac_addr))
+   940	    {
+   941	        param->set_tx = 0;
+   942	    }
+   943	    else
+   944	    {
+   945	        param->set_tx = 1;
+   946	    }
+   947	
+   948	    param->idx = key_index;
+   949	    CFG80211_DBG("cfg80211_crypt.idx=%d", param->idx);
+   950	
+   951	    if (params->key_len && params->key)
+   952	    {
+   953	        param->key_len = params->key_len;
+   954	        zt_memcpy(param->key, (zt_u8 *) params->key, params->key_len);
+   955	    }
+   956	    if (zt_local_cfg_get_work_mode(pnic_info) == ZT_INFRA_MODE)
+   957	    {
+   958	        res = cfg80211_sta_set_encryption(ndev, param, param_len);
+   959	    }
+   960	#ifdef CFG_ENABLE_AP_MODE
+
+=== KEY ARRAY DEFINITIONS ===
+   115	} SEC_PMKID_LIST, *pSEC_PMKID_LIST;
+   116	
+   117	typedef struct sec_info
+   118	{
+   119	    zt_u32 dot11AuthAlgrthm;
+   120	    zt_u32 dot11PrivacyAlgrthm; /* for wep or wpa/wpa2 unicast privacy algrthm */
+   121	
+   122	    zt_u32 dot11PrivacyKeyIndex;
+   123	    union Keytype dot11DefKey[4];
+   124	    zt_u32 dot11DefKeylen[4];
+   125	    zt_u8 key_mask;
+   126	
+   127	    zt_u32 dot118021XGrpPrivacy;
+   128	    zt_u32 dot118021XGrpKeyid;
+   129	    union Keytype dot118021XGrpKey[4];
+   130	    union Keytype dot118021XGrptxmickey[4];
+   131	    union Keytype dot118021XGrprxmickey[4];
+   132	    union pn48 dot11Grptxpn;
+   133	    union pn48 dot11Grprxpn;
+   134	#ifdef CFG_ENABLE_AP_MODE
+   135	    zt_u32 wpa_psk;
+   136	    zt_u32 wpa_multicast_cipher;
+   137	    zt_u32 wpa_unicast_cipher;
+   138	    zt_u32 rsn_group_cipher;
+   139	    zt_u32 rsn_pairwise_cipher;
+   140	#endif
+
+=== PR FILE SUMMARY ===
+ q.txt               | 2226 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/nic/wlan_mgmt.c |  221 ++++++---
+ 2 files changed, 2388 insertions(+), 59 deletions(-)
+pythango_dev@V0id:/tmp/zt9101-linux-driver-publish$ 

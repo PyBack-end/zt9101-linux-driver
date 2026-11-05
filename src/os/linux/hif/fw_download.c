@@ -101,6 +101,11 @@ zt_s32 zt_fw_download(void *node)
     int ret;
     zt_u8 value8;
 
+    if (hif_node == NULL || hif_node->drv_ops == NULL)
+    {
+        return -1;
+    }
+
     re_dw_cnt = 0;
     DW_ALL_FW_FAIL_RETRY:
 
@@ -116,7 +121,13 @@ zt_s32 zt_fw_download(void *node)
     zt_hw_mcu_disable(hif_node);
     zt_hw_mcu_enable(hif_node);
 
-    hif_io_read(hif_node, 0, 0xf4, &value8, sizeof(value8));
+    value8 = 0;
+    if (hif_io_read(hif_node, 0, 0xf4, &value8, sizeof(value8)) < 0)
+    {
+        FWDL_ERROR("failed to read efuse status");
+        hif_firmware_read_free(&firmware_info);
+        return -1;
+    }
     if (value8 & ZT_BIT(0))
     {
         FWDL_ERROR("efuse setting error!");

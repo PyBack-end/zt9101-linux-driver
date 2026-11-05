@@ -592,7 +592,7 @@ static zt_s32 __init hif_init(void)
         {
             loff_t cfg_file_size = zt_os_api_file_size(file);
 
-            if (cfg_file_size <= 0 || cfg_file_size > 0xffffffffULL)
+            if (cfg_file_size <= 0 || cfg_file_size > INT_MAX)
             {
                 gl_hif->cfg_size = 0;
                 gl_hif->cfg_content = NULL;

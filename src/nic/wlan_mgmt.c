@@ -972,20 +972,40 @@ static zt_s32 rx_frame_handle(nic_info_st *pnic_info)
                 case ZT_WLAN_MGMT_TAG_PROBEREQ_P2P :
                 {
                     rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
-                    zt_u16 frm_msg_len = pmsg->len;
-                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
-                    zt_p2p_recv_probereq(pnic_info,  (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm, mgmt_len);
+                    zt_u32 frm_msg_len = pmsg->len;
+                    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+                    zt_u32 mgmt_len;
+
+                    if (frm_msg_len < frame_offset + sizeof(zt_80211_hdr_3addr_t))
+                    {
+                        WLAN_MGMT_WARN("truncated P2P probe request message");
+                        break;
+                    }
+                    mgmt_len = frm_msg_len - frame_offset;
+                    zt_p2p_recv_probereq(pnic_info,
+                                         (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm,
+                                         (zt_u16)mgmt_len);
                     break;
                 }
 
                 case ZT_WLAN_MGMT_TAG_ACTION :
                 {
                     rx_frm_msg_t *pfrm_msg = (void *)pmsg->value;
-                    zt_u16 frm_msg_len = pmsg->len;
-                    zt_u16 mgmt_len = frm_msg_len - ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+                    zt_u32 frm_msg_len = pmsg->len;
+                    zt_u32 frame_offset = ZT_OFFSETOF(rx_frm_msg_t, mgmt_frm);
+                    zt_u32 mgmt_len;
+
+                    if (frm_msg_len < frame_offset + sizeof(zt_80211_hdr_3addr_t))
+                    {
+                        WLAN_MGMT_WARN("truncated action frame message");
+                        break;
+                    }
+                    mgmt_len = frm_msg_len - frame_offset;
                     //WLAN_MGMT_INFO("action frame");
 
-                    zt_action_frame_process(pnic_info, (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm, mgmt_len);
+                    zt_action_frame_process(pnic_info,
+                                            (zt_80211_mgmt_t *)pfrm_msg->mgmt_frm,
+                                            (zt_u16)mgmt_len);
                     break;
                 }
 
@@ -1047,8 +1067,7 @@ static zt_s32 frm_msg_send(zt_wlan_mgmt_info_t *pwlan_mgmt_info,
         return -1;
     }
 
-    if (pmsg == NULL || pmsg->value == NULL ||
-            pmsg->alloc_value_size < frame_offset ||
+    if (pmsg == NULL || pmsg->alloc_value_size < frame_offset ||
             mgmt_len > pmsg->alloc_value_size - frame_offset)
     {
         WLAN_MGMT_ERROR("frame size(%u) exceeds message capacity(%u)",

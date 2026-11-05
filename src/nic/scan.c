@@ -769,7 +769,7 @@ done:
     /* refresh scan queue */
     zt_wlan_mgmt_scan_que_refresh(pnic_info,
                                   pscan_info->preq->ch_map,
-                                  pscan_info->ch_idx);
+                                  pscan_info->preq->ch_num);
 
     if (!zt_p2p_is_valid(pnic_info) &&
             pscan_info->preq->type == SCAN_TYPE_ACTIVE)

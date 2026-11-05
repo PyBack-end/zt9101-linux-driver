@@ -982,6 +982,10 @@ insert_fail:
         zt_hif_queue_disable(hif_info);
         zt_data_queue_mngt_term(hif_info);
     }
+    if (hif_info->proc_info)
+    {
+        zt_proc_term(hif_info);
+    }
     if (hif_info->bulk_enable || hif_info->fw_buffer ||
             hif_info->cmd_snd_buffer || hif_info->cmd_rcv_buffer)
     {

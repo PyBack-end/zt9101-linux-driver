@@ -1289,36 +1289,36 @@ zt_s32 zt_iw_getScan(struct net_device *ndev, struct iw_request_info *info,
 
 static zt_bool is_8021x_auth(zt_80211_mgmt_ie_t *pies, zt_u16 ies_len)
 {
-    zt_80211_mgmt_ie_t *pie;
-    zt_u16 offset_len = 0;
+    zt_u8 *cursor = (zt_u8 *)pies;
+    zt_u16 remaining = ies_len;
     zt_u32 pmulticast_cipher, punicast_cipher;
 
-    pie = pies;
-
-    while (offset_len < ies_len)
+    if (pies == NULL)
     {
-        switch (pie->element_id)
-        {
-            case ZT_80211_MGMT_EID_RSN:
-                IW_FUNC_DBG("RSN");
-                return zt_true;
-            case ZT_80211_MGMT_EID_VENDOR_SPECIFIC:
-                if (!zt_80211_mgmt_wpa_survey(pie,
-                                              ZT_OFFSETOF(zt_80211_mgmt_ie_t, data) + pie->len,
-                                              NULL, NULL,
-                                              &pmulticast_cipher,
-                                              &punicast_cipher))
-                {
-                    IW_FUNC_INFO("WPA");
-                    return zt_true;
-                }
-                break;
-            default:
-                break;
-        }
+        return zt_false;
+    }
 
-        offset_len += pie->len + ZT_OFFSETOF(zt_80211_mgmt_ie_t, data);
-        pie = (zt_80211_mgmt_ie_t *)(pie->data + pie->len);
+    while (remaining >= 2)
+    {
+        zt_u16 ie_size = (zt_u16)cursor[1] + 2;
+        if (ie_size > remaining)
+        {
+            return zt_false;
+        }
+        if (cursor[0] == ZT_80211_MGMT_EID_RSN)
+        {
+            IW_FUNC_DBG("RSN");
+            return zt_true;
+        }
+        if (cursor[0] == ZT_80211_MGMT_EID_VENDOR_SPECIFIC &&
+                !zt_80211_mgmt_wpa_survey(cursor, ie_size, NULL, NULL,
+                                          &pmulticast_cipher, &punicast_cipher))
+        {
+            IW_FUNC_INFO("WPA");
+            return zt_true;
+        }
+        cursor += ie_size;
+        remaining -= ie_size;
     }
 
     IW_FUNC_INFO("NO 8021X");

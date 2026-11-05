@@ -993,7 +993,19 @@ core_conn_maintain_keepalive_thrd(zt_pt_t *pt,  nic_info_st *pnic_info)
 
     for (;;)
     {
-        zt_nic_null_xmit(pnic_info, pwdn_info, zt_false, 0);
+        rst = zt_nic_null_xmit(pnic_info, pwdn_info, zt_false, 0);
+        if (rst)
+        {
+            /*
+             * A failed null-frame submission is not evidence that the
+             * peer is unreachable. Back off and retry without entering
+             * the probe/deauthentication sequence.
+             */
+            MLME_WARN("keepalive null frame transmit failed, error code: %d", rst);
+            zt_timer_set(&pmlme_info->keep_alive_timer, 10 * 1000);
+            PT_WAIT_UNTIL(pt, zt_timer_expired(&pmlme_info->keep_alive_timer));
+            continue;
+        }
         PT_WAIT_WHILE(pt, pmlme_info->link_info.busy_traffic);
 
         pwdn_info->rx_pkt_stat_last = pwdn_info->rx_pkt_stat;

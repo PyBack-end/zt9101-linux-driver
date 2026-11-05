@@ -2184,7 +2184,9 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
 
     LOG_I("scan request: channels=%u ssids=%u", req->n_channels, req->n_ssids);
 
-    if (req->ssids != NULL && 0 == zt_memcmp(req->ssids->ssid, "DIRECT-", 7)
+    if (req->n_ssids != 0 && req->ssids != NULL &&
+        req->ssids[0].ssid_len >= 7 &&
+        0 == zt_memcmp(req->ssids[0].ssid, "DIRECT-", 7)
             && zt_p2p_get_ie((zt_u8 *) req->ie, req->ie_len, NULL, NULL))
     {
         if (req->ssids->ssid_len == 7)

@@ -1271,8 +1271,21 @@ zt_s32 zt_wlan_mgmt_rx_frame(void *ptr)
             break;
 
         case ZT_80211_FRM_AUTH :
-            zt_auth_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);
+        {
+            zt_s32 auth_ret = zt_auth_frame_parse(pnic_info, pwdn_info,
+                                                  pmgmt, mgmt_len);
+            if (auth_ret != 0)
+            {
+                WLAN_MGMT_WARN("[AUTH-RX] parser rejected frame: ret=%d len=%u WDN=%p",
+                               auth_ret, mgmt_len, pwdn_info);
+            }
+            else
+            {
+                WLAN_MGMT_DBG("[AUTH-RX] response queued: len=%u WDN=%p",
+                              mgmt_len, pwdn_info);
+            }
             break;
+        }
 
         case ZT_80211_FRM_DEAUTH :
             zt_deauth_frame_parse(pnic_info, pwdn_info, pmgmt, mgmt_len);

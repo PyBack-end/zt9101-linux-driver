@@ -843,8 +843,12 @@ static zt_s32 zt_usb_alloc_urb(data_queue_node_st *data_node)
 
 static zt_s32 zt_usb_free_urb(data_queue_node_st *data_node)
 {
-    usb_kill_urb(data_node->hif_dev);
-    usb_free_urb(data_node->hif_dev);
+    if (data_node && data_node->hif_dev)
+    {
+        usb_kill_urb(data_node->hif_dev);
+        usb_free_urb(data_node->hif_dev);
+        data_node->hif_dev = NULL;
+    }
 
     return 0;
 }

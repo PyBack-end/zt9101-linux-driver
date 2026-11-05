@@ -135,6 +135,25 @@ static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
 
 zt_s32 nic_init(nic_info_st *pnic_info)
 {
+    zt_bool hardware_ready = zt_false;
+#ifdef ZT_CONFIG_P2P
+    zt_bool p2p_ready = zt_false;
+#endif
+#ifdef CFG_ENABLE_ADHOC_MODE
+    zt_bool adhoc_ready = zt_false;
+#endif
+    zt_bool wdn_ready = zt_false;
+    zt_bool scan_ready = zt_false;
+    zt_bool auth_ready = zt_false;
+    zt_bool assoc_ready = zt_false;
+    zt_bool sec_ready = zt_false;
+    zt_bool lps_ready = zt_false;
+    zt_bool wlan_ready = zt_false;
+#ifdef CFG_ENABLE_AP_MODE
+    zt_bool ap_ready = zt_false;
+#endif
+    zt_bool mlme_ready = zt_false;
+
     LOG_D("[NIC] nic_init - start");
 
     zt_os_api_sema_init(&pnic_info->cmd_sema, 1);
@@ -143,101 +162,138 @@ zt_s32 nic_init(nic_info_st *pnic_info)
     if (prv_hardware_init(pnic_info) < 0)
     {
         LOG_E("===>prv_hardware_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    hardware_ready = zt_true;
 
     /*p2p*/
 #ifdef ZT_CONFIG_P2P
     if (zt_p2p_init(pnic_info) < 0)
     {
         LOG_E("===>zt_p2p_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    p2p_ready = zt_true;
 #endif
 
 #ifdef CFG_ENABLE_ADHOC_MODE
     if (zt_adhoc_init(pnic_info) < 0)
     {
         LOG_E("===>zt_adhoc_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    adhoc_ready = zt_true;
 #endif
 
     /*wdn init*/
     if (zt_wdn_init(pnic_info) < 0)
     {
         LOG_E("===>zt_wdn_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    wdn_ready = zt_true;
 
     /* scan init */
     if (zt_scan_init(pnic_info) < 0)
     {
         LOG_E("===>zt_scan_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    scan_ready = zt_true;
 
     /* auth init */
     if (zt_auth_init(pnic_info) < 0)
     {
         LOG_E("===>zt_auth_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    auth_ready = zt_true;
 
     /* assoc init */
     if (zt_assoc_init(pnic_info) < 0)
     {
         LOG_E("===>zt_assoc_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    assoc_ready = zt_true;
 
     /* sec init */
     if (zt_sec_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_sec_info_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    sec_ready = zt_true;
 
     /* pwr_info init  */
     if (zt_lps_init(pnic_info) < 0)
     {
         LOG_E("===>zt_lps_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    lps_ready = zt_true;
 
     /* wlan init */
     if (zt_wlan_mgmt_init(pnic_info) < 0)
     {
         LOG_E("===>zt_wlan_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    wlan_ready = zt_true;
 
 #ifdef CFG_ENABLE_AP_MODE
     /* ap init */
     if (zt_ap_init(pnic_info) < 0)
     {
         LOG_E("===>zt_ap_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    ap_ready = zt_true;
 #endif
 
     /* mlme init */
     if (zt_mlme_init(pnic_info) < 0)
     {
         LOG_E("===>zt_mlme_init error");
-        return ZT_RETURN_FAIL;
+        goto init_fail;
     }
+    mlme_ready = zt_true;
 
     pnic_info->is_init_commplete = zt_true;
     LOG_D("[NIC] nic_init - end");
 
     return ZT_RETURN_OK;
+
+init_fail:
+    /* Reverse only subsystems whose initialization completed successfully. */
+    if (mlme_ready) zt_mlme_term(pnic_info);
+#ifdef CFG_ENABLE_AP_MODE
+    if (ap_ready) zt_ap_term(pnic_info);
+#endif
+    if (wlan_ready) zt_wlan_mgmt_term(pnic_info);
+    if (lps_ready) zt_lps_term(pnic_info);
+    if (sec_ready) zt_sec_info_term(pnic_info);
+    if (assoc_ready) zt_assoc_term(pnic_info);
+    if (auth_ready) zt_auth_term(pnic_info);
+    if (scan_ready) zt_scan_term(pnic_info);
+    if (wdn_ready) zt_wdn_term(pnic_info);
+#ifdef CFG_ENABLE_ADHOC_MODE
+    if (adhoc_ready) zt_adhoc_term(pnic_info);
+#endif
+#ifdef ZT_CONFIG_P2P
+    if (p2p_ready) zt_p2p_term(pnic_info);
+#endif
+    if (hardware_ready) prv_hardware_term(pnic_info);
+    pnic_info->is_init_commplete = zt_false;
+    return ZT_RETURN_FAIL;
 }
 
 
 
 zt_s32 nic_term(nic_info_st *pnic_info)
 {
+    zt_s32 ret = ZT_RETURN_OK;
+
     LOG_D("[NIC] nic_term - start");
 
     pnic_info->is_init_commplete = zt_false;
@@ -333,7 +389,7 @@ zt_s32 nic_term(nic_info_st *pnic_info)
     }
 
     LOG_D("[NIC] nic_term - end");
-    return ZT_RETURN_OK;
+    return ret;
 }
 
 

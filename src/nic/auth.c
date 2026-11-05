@@ -890,7 +890,7 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
         {
             zt_msg_del(pmsg_que, pmsg);
             AUTH_DBG("push msg fail, error code: %d", rst);
-            return -7;
+            return -8;
         }
     }
 

@@ -1,62 +1,107 @@
-# ZT9101 Linux USB Wi-Fi Driver
+# ZT9101 USB Wi-Fi driver for current Linux kernels
 
-An open-source Linux driver project for USB wireless adapters based on the ZT9101 chipset.
+Linux driver for **ZTop ZT9101** 802.11n (2.4 GHz) USB Wi-Fi adapters, patched to build
+and run on current kernels (6.13 → 7.2). These adapters are sold under generic names such
+as "Wireless 11N USB Adapter"; `lsusb` shows:
 
-The project focuses on bringing ZT9101-based wireless hardware into the Linux networking stack, including USB device management, wireless interface registration, cfg80211 integration, and Wi-Fi Direct (P2P) functionality.
+```
+350b:9101 ZTopInc 802.11n NIC
+```
 
-## What it does
+There is no driver for this chip in the mainline kernel. This is ZTop's vendor driver
+(via the community forks credited below) with the fixes needed for modern kernels, DKMS
+packaging, and an installer.
 
-- **USB device support:** Detects and initializes compatible ZT9101 USB wireless adapters.
-- **Wireless networking:** Integrates the adapter with Linux network interfaces.
-- **cfg80211 integration:** Provides wireless configuration and interface management through the Linux wireless subsystem.
-- **Wi-Fi Direct / P2P:** Includes infrastructure for P2P Client and P2P Group Owner interface roles.
-- **Device lifecycle management:** Handles initialization, resource allocation, shutdown, and USB disconnection.
-- **Hardware communication:** Implements the host interface and USB endpoint management required to communicate with the adapter.
+## Status
 
-## Current development
+| Kernel | Distro | Result |
+|---|---|---|
+| 7.2.11 | Fedora 44 (Secure Boot on) | builds, loads, WPA2 connect, ~72 Mbit/s link |
+| 6.19.10 | Fedora 44 | builds, loads |
+| 7.0 | Ubuntu | builds (not run) |
 
-The project is undergoing a source-level audit and reliability improvement process.
+Tested hardware: one adapter, `350b:9101`. The driver's ID table also lists `350b:9106`,
+`350b:9086` and `2310:9086` (untested). Kernel 7.1 is untested; the 7.2 API switch is keyed
+to `KERNEL_VERSION(7, 2, 0)`.
 
-Current areas of investigation include:
+## Install
 
-- USB probe and disconnect handling.
-- Initialization failure recovery and resource cleanup.
-- P2P and Wi-Fi Display resource management.
-- cfg80211 interface configuration.
-- Net-device registration and teardown.
-- Kernel compatibility and build reliability.
+1. Build tools and headers for your running kernel:
+   - Fedora: `sudo dnf install dkms gcc make kernel-devel-$(uname -r)`
+     (Fedora **Server** also needs `sudo dnf install kernel-modules-$(uname -r)` — it ships
+     without the Wi-Fi core module `cfg80211`)
+   - Debian/Ubuntu: `sudo apt install dkms build-essential linux-headers-$(uname -r)`
+2. `sudo ./install.sh --watchdog` (or without `--watchdog`, see below)
+3. If Secure Boot is on, enroll the DKMS signing key once (next section).
+4. Connect: `nmcli --ask dev wifi connect "<SSID>"`
 
-## Development status
+DKMS rebuilds the module automatically for every new kernel. Remove with `sudo ./uninstall.sh`.
 
-<details>
-<summary>Current status</summary>
+## Secure Boot
 
-| Area | Status |
-|---|---|
-| USB device identification | Confirmed |
-| Driver compilation | Previously successful |
-| cfg80211 integration | Present in source |
-| P2P Client role | Present in source |
-| P2P Group Owner role | Present in source |
-| Resource lifecycle audit | In progress |
-| Initialization rollback | Requires improvement |
-| Real hardware connectivity testing | Not yet verified |
-| Android Wi-Fi Direct interoperability | Not yet verified |
+The module is signed with your machine's DKMS key, which the firmware does not trust until
+you enroll it ("Key was rejected by service" from `modprobe`):
 
-</details>
+```
+sudo mokutil --import /var/lib/dkms/mok.pub       # Fedora; Ubuntu: /var/lib/shim-signed/mok/MOK.der
+```
 
-**Important:** The presence of P2P functionality in the source does not establish that Wi-Fi Direct connections work on real hardware. Hardware interoperability testing is still required.
+Choose a one-time password, reboot, and on the blue **MOK management** screen (10-second
+window): any key → *Enroll MOK* → *Continue* → *Yes* → password → *Reboot*.
+Nothing is echoed while typing the password. If a gaming keyboard drops keys there, use a
+one-character password (`mokutil --generate-hash=1 > h; sudo mokutil --import … --hash-file h`).
 
-## Building
+## Watchdog (recommended)
 
-Build instructions and supported kernel versions will be documented as compatibility testing progresses.
+The vendor driver can wedge after a connection is torn down mid-scan: every scan then fails
+with `CTRL-EVENT-SCAN-FAILED ret=-16` (EBUSY) and the adapter never reconnects.
+`install.sh --watchdog` adds:
 
-Do not assume that successful compilation guarantees safe operation or complete hardware functionality.
+- `extras/zt9101-watchdog` + a 1-minute systemd timer: if the adapter has been disconnected for
+  two checks in a row (with an auto-connect Wi-Fi profile present) or scans keep failing with
+  EBUSY, it resets the USB device, reloads the driver and re-activates the profile. At most one
+  reset per 5 minutes; every action is logged (`journalctl -t zt9101-watchdog`).
+- `extras/90-zt9101.conf`: turns off NetworkManager's scan-MAC randomization for this driver.
 
-## License
+Tested by forcing a disconnect: back online in ~13 s once the watchdog fires.
 
-See the repository's `LICENSE` file for the applicable license and redistribution terms.
+## Notes and troubleshooting
 
-## Disclaimer
+- **2.4 GHz only.** The adapter cannot see 5 GHz networks.
+- **No MAC address in the chip.** The driver logs `efuse read mac fail, use default addr` and
+  makes up `b4:04:18:00:xx:xx` on every load, so DHCP hands out a new IP each boot. Give the
+  connection a fixed MAC: `nmcli con mod "<SSID>" wifi.cloned-mac-address stable`.
+- **Interface name follows the USB port** (`wlp0s20f0u5`, `wlp0s20f0u7`, …). `nmcli dev wifi
+  connect` pins the new connection to the current name; unpin it so any port works:
+  `nmcli con mod "<SSID>" connection.interface-name ""`.
+- **After reloading `cfg80211`** (e.g. `modprobe -r zt9101_ztopmac_usb` also unloads it),
+  restart `wpa_supplicant`; otherwise it falls back to Wireless Extensions and every scan fails
+  with `ioctl[SIOCSIWSCAN]: Inappropriate ioctl for device`.
+- Debug logging is off (`CONFIG_DEBUG_LEVEL = 3`, errors only). Level 0 prints per packet and
+  roughly halves throughput.
 
-This project is under active investigation. Hardware support, kernel compatibility, and wireless functionality may vary. Use caution when testing experimental kernel drivers.
+## What was changed from upstream
+
+See the commit history. In short:
+
+- `EXTRA_CFLAGS` → `ccflags-y` (support removed in 6.15; include paths were dropped).
+- `#elseif` typo → `#elif`; `del_timer()` → `timer_delete()`.
+- cfg80211 API: `set_monitor_channel` net_device (6.13), `get_tx_power` link_id (6.14),
+  `radio_idx` (6.17), key/station ops on `wireless_dev`, `remain_on_channel` rx_addr,
+  `cfg80211_new_sta/del_sta` on `wireless_dev` (7.2).
+- No-op the two Wireless Extensions helpers on kernels without WEXT (Fedora).
+- `strncpy()` (removed in 7.2) → local helper with the same semantics.
+- MAC address via `eth_hw_addr_set()`, fixing a kernel WARN and failed associations after
+  NetworkManager changes the MAC.
+- DKMS config, installer and uninstaller.
+
+## Credits and license
+
+- ZTop Microelectronics — vendor driver `ZT9101_android_V1.2.1800.20241115` and firmware.
+- [yjun123/ZT9101_vendor_linux_driver](https://github.com/yjun123/ZT9101_vendor_linux_driver)
+- [sallecta/driver_wifi_ztopinc](https://codeberg.org/sallecta/driver_wifi_ztopinc) — the
+  fork this repository starts from (its README is kept as `UPSTREAM-README.md`).
+- Kernel 6.13–7.2 fixes and packaging: Radiance Innovation Centers in the Philippines.
+
+GPL-2.0, as upstream (`LICENSE`). The firmware files under `src/fw/` are ZTop's, as
+distributed with the upstream driver.

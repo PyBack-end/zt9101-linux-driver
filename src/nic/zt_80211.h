@@ -698,7 +698,7 @@ typedef struct
 {
     zt_u8 element_id;
     zt_u8 len;
-    zt_u8 data[0];
+    zt_u8 data[];
 } zt_80211_mgmt_ie_t;
 
 /* U-APSD queue for WMM IEs sent by AP */

@@ -871,6 +871,8 @@ static zt_s32 zt_usb_probe(struct usb_interface *pusb_intf,
     hif_usb_mngt *pusb_mngt = NULL;
     //zt_u32 version          = 0;
     zt_s32 ret                 = 0;
+    zt_bool endpoint_ready = zt_false;
+    zt_bool usb_id_allocated = zt_false;
 
     LOG_D("************USB CONNECT*************");
 
@@ -891,6 +893,7 @@ static zt_s32 zt_usb_probe(struct usb_interface *pusb_intf,
         ret = -ENODEV;
         goto exit;
     }
+    endpoint_ready = zt_true;
 
     pctrl_buffer = zt_kzalloc(USB_CONTROL_MSG_BF_LEN);
     if (NULL == pctrl_buffer)
@@ -911,7 +914,14 @@ static zt_s32 zt_usb_probe(struct usb_interface *pusb_intf,
 
     hif_node->drv_ops = (struct device_info_ops *)pdid->driver_info;
     /*add usb handle into hif_node */
-    pusb_mngt->usb_id = hm_new_usb_id(NULL);
+    pusb_mngt->usb_id = hm_new_usb_id(&ret);
+    if (ret != ZT_RETURN_OK || pusb_mngt->usb_id == 0xff)
+    {
+        USB_WARN("[usb] failed to allocate USB identifier");
+        ret = -ENODEV;
+        goto exit;
+    }
+    usb_id_allocated = zt_true;
     pusb_mngt->ctrl_msg_buffer = pctrl_buffer;
     zt_memcpy(&hif_node->u.usb, pusb_mngt, sizeof(hif_usb_mngt));
 
@@ -922,24 +932,41 @@ static zt_s32 zt_usb_probe(struct usb_interface *pusb_intf,
     if (hif_dev_insert(hif_node) < 0)
     {
         USB_WARN("[usb] hif dev insert error !!");
-        ret = 0;
+        ret = -ENODEV;
         goto exit;
     }
 
-exit :
-    if (pusb_mngt)
-    {
-        zt_kfree(pusb_mngt);
-    }
-
+exit:
     if (ret < 0)
     {
-        if (pctrl_buffer)
+        if (hif_node)
         {
-            zt_kfree(pctrl_buffer);
+            /* hif_dev_insert() unwinds initialized HIF/NIC resources on error. */
+            usb_set_intfdata(pusb_intf, hif_node);
+            if (usb_id_allocated)
+            {
+                hm_del_usb_id(hif_node->u.usb.usb_id);
+            }
+            if (endpoint_ready)
+            {
+                zt_endpoint_deinit(pusb_intf);
+                endpoint_ready = zt_false;
+            }
+            hif_node_unregister(hif_node);
+            hif_node = NULL;
         }
+        else if (endpoint_ready)
+        {
+            /* endpoint_init() acquired a usb_device reference. */
+            usb_put_dev(interface_to_usbdev(pusb_intf));
+            endpoint_ready = zt_false;
+        }
+
+        zt_kfree(pctrl_buffer);
+        pctrl_buffer = NULL;
     }
 
+    zt_kfree(pusb_mngt);
     return ret;
 }
 
@@ -950,12 +977,17 @@ static void zt_usb_disconnect(struct usb_interface *pusb_intf)
 
     LOG_D("************USB DISCONNECT*************");
 
+    if (NULL == hif_node)
+    {
+        USB_WARN("[usb] disconnect called without a registered HIF node");
+        return;
+    }
+
     /* ndev unregister should been do first */
     ndev_unregister_all(hif_node->nic_info, hif_node->nic_number);
 
     hif_dev_removed(hif_node);
 
-    if (NULL != hif_node)
     {
         ret = hm_del_usb_id(hif_node->u.usb.usb_id);
         if (ret)
@@ -965,10 +997,6 @@ static void zt_usb_disconnect(struct usb_interface *pusb_intf)
         zt_kfree(hif_node->u.usb.ctrl_msg_buffer);
         zt_endpoint_deinit(pusb_intf);
         hif_node_unregister(hif_node);
-    }
-    else
-    {
-        USB_WARN("[usb] zt_usb_disconnect failed");
     }
 }
 

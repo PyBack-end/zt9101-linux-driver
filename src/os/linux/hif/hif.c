@@ -891,20 +891,25 @@ DEV_REINSERT:
 
     /*create hif trx func*/
     LOG_D("<< create hif tx/rx queue >>");
-    zt_data_queue_mngt_init(hif_info);
+    ret = zt_data_queue_mngt_init(hif_info);
+    if (ret != ZT_RETURN_OK)
+    {
+        LOG_E("[%s] zt_data_queue_mngt_init failed", __func__);
+        goto insert_fail;
+    }
 
     ret = zt_hif_bulk_enable(hif_info);
-    if (ZT_RETURN_FAIL == ret)
+    if (ret != ZT_RETURN_OK)
     {
         LOG_E("[%s] zt_hif_bulk_enable failed", __func__);
-        return -1;
+        goto insert_fail;
     }
 
     ret = zt_hif_queue_enable(hif_info);
-    if (ZT_RETURN_FAIL == ret)
+    if (ret != ZT_RETURN_OK)
     {
         LOG_E("[%s] zt_hif_queue_enable failed", __func__);
-        return -1;
+        goto insert_fail;
     }
 
     /*ndev reg*/
@@ -923,7 +928,7 @@ DEV_REINSERT:
             goto DEV_REINSERT;
         } else {
             LOG_E("===>zt_fw_download error, exit!!");
-            return ZT_RETURN_FAIL;
+            goto insert_fail;
         }
     }
 
@@ -940,8 +945,8 @@ DEV_REINSERT:
         ret = hif_add_nic(hif_info, i);
         if (ret != 0)
         {
-            LOG_E("[%s] ndev_register nic[%d] failed", __func__, i);
-            return -1;
+            LOG_E("[%s] hif_add_nic[%d] failed", __func__, i);
+            goto insert_fail;
         }
 
         LOG_D("<< ndev_%d register >>", i);
@@ -949,7 +954,7 @@ DEV_REINSERT:
         if (ret != 0)
         {
             LOG_E("[%s] ndev_register nic[%d] failed", __func__, i);
-            return -1;
+            goto insert_fail;
         }
     }
 
@@ -957,13 +962,50 @@ DEV_REINSERT:
     if (zt_proc_init(hif_info) < 0)
     {
         LOG_E("===>zt_proc_init error");
-        return ZT_RETURN_FAIL;
+        goto insert_fail;
     }
 
     /* close the fw debug info */
     zt_mcu_disable_fw_dbginfo(hif_info->nic_info[0]);
 
     return 0;
+
+insert_fail:
+    /* Tear down only stages that reached their initialized state. */
+    hif_info->dev_removed = zt_true;
+    if (hif_info->bulk_enable)
+    {
+        zt_hif_bulk_cmd_post_exit(hif_info);
+    }
+    if (hif_info->trx_pipe.is_init)
+    {
+        zt_hif_queue_disable(hif_info);
+        zt_data_queue_mngt_term(hif_info);
+    }
+    if (hif_info->proc_info)
+    {
+        zt_proc_term(hif_info);
+    }
+    if (hif_info->bulk_enable || hif_info->fw_buffer ||
+            hif_info->cmd_snd_buffer || hif_info->cmd_rcv_buffer)
+    {
+        zt_hif_bulk_disable(hif_info);
+    }
+    for (i = 0; i < hif_info->nic_number; i++)
+    {
+        if (hif_info->nic_info[i])
+        {
+            ndev_unregister(hif_info->nic_info[i]);
+            if (i == 0 && hif_info->nic_number > 1 && hif_info->nic_info[1])
+            {
+                hif_info->nic_info[1]->buddy_nic = NULL;
+            }
+            zt_kfree(hif_info->nic_info[i]);
+            hif_info->nic_info[i] = NULL;
+        }
+    }
+    hif_info->nic_number = 0;
+    return ZT_RETURN_FAIL;
 }
 
 
@@ -974,24 +1016,36 @@ void  hif_dev_removed(hif_node_st *hif_info)
     LOG_D("************HIF DEV REMOVE [NODE:%d TYPE:%d]*************",
           hif_info->node_id, hif_info->hif_type);
 
-    zt_hif_bulk_cmd_post_exit(hif_info);
+    if (hif_info->bulk_enable)
+    {
+        zt_hif_bulk_cmd_post_exit(hif_info);
+    }
 
-    if (HIF_SDIO == hif_info->hif_type)
+    if (HIF_SDIO == hif_info->hif_type && hif_info->trx_pipe.is_init)
     {
 #ifndef CONFIG_USB_FLAG
         zt_sdioh_interrupt_disable(hif_info);
 #endif
     }
-    zt_hif_queue_disable(hif_info);
+    if (hif_info->trx_pipe.is_init)
+    {
+        zt_hif_queue_disable(hif_info);
+        /* term hif tx/rx queue */
+        LOG_D("<< term hif tx/rx queue >>");
+        zt_data_queue_mngt_term(hif_info);
+    }
 
-    zt_hif_bulk_disable(hif_info);
-
-    /* term hif trx mode */
-    LOG_D("<< term hif tx/rx queue >>");
-    zt_data_queue_mngt_term(hif_info);
+    if (hif_info->bulk_enable || hif_info->fw_buffer ||
+            hif_info->cmd_snd_buffer || hif_info->cmd_rcv_buffer)
+    {
+        zt_hif_bulk_disable(hif_info);
+    }
 
     /*proc term*/
-    zt_proc_term(hif_info);
+    if (hif_info->proc_info)
+    {
+        zt_proc_term(hif_info);
+    }
 
     /* power off */
     LOG_D("<< Power off >>");
@@ -1126,11 +1180,11 @@ zt_s32 zt_hif_bulk_enable(hif_node_st *hif_node)
         return ZT_RETURN_FAIL;
     }
 
-    hif_node->cmd_rcv_buffer =  zt_kzalloc(512);
+    hif_node->cmd_rcv_buffer = zt_kzalloc(512);
     if (NULL == hif_node->cmd_rcv_buffer)
     {
-        LOG_E("no memmory for hif cmd buffer");
-        return ZT_RETURN_FAIL;
+        LOG_E("no memory for hif command receive buffer");
+        goto alloc_fail;
     }
 
     mutex_init(&hif_node->reg_mutex);
@@ -1142,6 +1196,14 @@ zt_s32 zt_hif_bulk_enable(hif_node_st *hif_node)
     hif_node->cmd_size = 0;
     hif_node->bulk_enable = zt_true;
     return ZT_RETURN_OK;
+
+alloc_fail:
+    zt_kfree(hif_node->cmd_snd_buffer);
+    zt_kfree(hif_node->fw_buffer);
+    hif_node->cmd_snd_buffer = NULL;
+    hif_node->fw_buffer = NULL;
+    hif_node->cmd_rcv_buffer = NULL;
+    return ZT_RETURN_FAIL;
 }
 
 zt_s32 zt_hif_bulk_disable(hif_node_st *hif_node)
@@ -1149,15 +1211,19 @@ zt_s32 zt_hif_bulk_disable(hif_node_st *hif_node)
     if (NULL != hif_node->fw_buffer)
     {
         zt_kfree(hif_node->fw_buffer);
+        hif_node->fw_buffer = NULL;
     }
     if (NULL != hif_node->cmd_snd_buffer)
     {
         zt_kfree(hif_node->cmd_snd_buffer);
+        hif_node->cmd_snd_buffer = NULL;
     }
     if (NULL != hif_node->cmd_rcv_buffer)
     {
         zt_kfree(hif_node->cmd_rcv_buffer);
+        hif_node->cmd_rcv_buffer = NULL;
     }
+    hif_node->bulk_enable = zt_false;
     hif_node->reg_size = 0;
     hif_node->fw_size = 0;
     hif_node->cmd_size = 0;

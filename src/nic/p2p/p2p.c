@@ -519,15 +519,24 @@ zt_s32 zt_p2p_init(nic_info_st *pnic_info)
         if (NULL == p2p_info->p2p_ie[i])
         {
             P2P_ERR("zt_kzalloc p2p_ie failed");
-            return ZT_RETURN_FAIL;
+            goto init_fail;
         }
     }
     if (zt_p2p_wfd_init(pnic_info, 1) != zt_true)
     {
-        P2P_WARN("\n Can't init wfd\n");
+        P2P_ERR("Can't init wfd");
+        goto init_fail;
     }
 
     return 0;
+
+init_fail:
+    /*
+     * zt_p2p_term() frees every buffer that was allocated, including
+     * partially initialized WFD state, and unregisters both timers.
+     */
+    zt_p2p_term(pnic_info);
+    return ZT_RETURN_FAIL;
 
 }
 
@@ -543,7 +552,7 @@ zt_s32 zt_p2p_term(nic_info_st *pnic_info)
 
     if (NULL == p2p_info)
     {
-        return -1;
+        return 0;
     }
 
     for (i = 0; i < ZT_P2P_IE_MAX; i++)
@@ -558,6 +567,7 @@ zt_s32 zt_p2p_term(nic_info_st *pnic_info)
     {
         zt_kfree(pwfd_info->wfd_ie[i]);
         pwfd_info->wfd_ie[i] = NULL;
+        pwfd_info->wfd_ie_len[i] = 0;
     }
 
     zt_os_api_timer_unreg(&p2p_info->nego_timer);

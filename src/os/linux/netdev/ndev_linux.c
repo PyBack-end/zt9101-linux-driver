@@ -878,6 +878,9 @@ zt_s32 ndev_register(nic_info_st *pnic_info)
     if (ret)
     {
         NDEV_WARN("nl80211 device alloc fail [ret:%d]", ret);
+        free_netdev(pndev);
+        pnic_info->ndev = NULL;
+        pnic_info->widev_priv = NULL;
         return ret;
     }
 
@@ -887,6 +890,11 @@ zt_s32 ndev_register(nic_info_st *pnic_info)
     if (ret)
     {
         NDEV_WARN("nl80211 wiphy regiest fail [ret:%d]", ret);
+        zt_cfg80211_widev_free(pnic_info);
+        zt_cfg80211_wiphy_free(pnic_info);
+        free_netdev(pndev);
+        pnic_info->ndev = NULL;
+        pnic_info->widev_priv = NULL;
         return ret;
     }
 #endif
@@ -1009,7 +1017,8 @@ zt_s32 ndev_unregister_all(nic_info_st *nic_info[], zt_u8 nic_num)
         LOG_D("ndev unregister: ndev_id: %d", pnic_info->ndev_id);
         pnic_info->is_surprise_removed = zt_true;
         ndev_shutdown(pnic_info);
-        if (zt_false == pnic_info->is_init_commplete)
+        if (zt_false == pnic_info->is_init_commplete &&
+                zt_false == pnic_info->is_init_cleanup_done)
         {
             nic_term(pnic_info);
         }

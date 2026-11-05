@@ -49,6 +49,7 @@ typedef struct nic_info
     zt_bool is_driver_critical;
     zt_bool is_up;
     zt_bool is_init_commplete;
+    zt_bool is_init_cleanup_done;
     zt_os_api_sema_t cmd_sema;
     zt_u32  nic_state;
     zt_u32 setband;

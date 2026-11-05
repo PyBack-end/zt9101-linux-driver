@@ -751,7 +751,11 @@ zt_s32 zt_data_queue_mngt_init(void *hif_node)
         if (NULL == hif_info->u.sdio.tx_agg_buffer)
         {
             LOG_E("[%s] tx_agg_buffer failed", __func__);
-            return 0;
+            zt_que_deinit(&data_queue_mngt->free_rx_queue);
+            zt_que_deinit(&data_queue_mngt->free_tx_queue);
+            zt_que_deinit(&data_queue_mngt->tx_queue);
+            zt_os_api_lock_term(&data_queue_mngt->queu_txop_lock);
+            return ZT_RETURN_FAIL;
         }
         hif_info->u.sdio.free_tx_page = 0;
     }
@@ -771,64 +775,63 @@ zt_s32 zt_data_queue_mngt_init(void *hif_node)
     data_queue_mngt->alloc_cnt++;
     zt_hif_queue_alloc_skb(&data_queue_mngt->free_rx_queue_skb, hif_info->hif_type);
 
+    /* Mark the primitive queues and tasklets as initialized before allocating
+     * queue storage so the common termination path can unwind any later error. */
+    data_queue_mngt->is_init = zt_true;
+    data_queue_mngt->is_free_tx_stopped = zt_false;
+
     /*rx queue init */
     hif_info->trx_pipe.all_rx_queue = zt_queue_node_malloc(
                                           ZT_RX_MAX_DATA_QUEUE_NODE_NUM);
+    if (NULL == hif_info->trx_pipe.all_rx_queue)
+    {
+        LOG_E("[%s] receive queue allocation failed", __func__);
+        goto init_fail;
+    }
+
     for (i = 0; i < ZT_RX_MAX_DATA_QUEUE_NODE_NUM; i++)
     {
-        recv_node = hif_info->trx_pipe.all_rx_queue + i;
-
-        //LOG_I("[%s] [%d] recv_node:%p",__func__,i,recv_node);
-        recv_node->hif_node = hif_node;
+        recv_node = &hif_info->trx_pipe.all_rx_queue[i];
+        recv_node->hif_node = hif_info;
         recv_node->real_size = 0;
         recv_node->node_id = i;
         if (NULL != hif_info->ops->hif_alloc_buff &&
                 0 != hif_info->ops->hif_alloc_buff(recv_node))
         {
-            if (HIF_USB == hif_info->hif_type)
-            {
-                LOG_E("[%s] hif_alloc_buff failed", __func__);
-                zt_free_skb((struct sk_buff *)recv_node->buff);
-                zt_kfree(recv_node);
-            }
-            continue;
+            LOG_E("[%s] receive buffer allocation failed at %d", __func__, i);
+            goto init_fail;
         }
-
         zt_enque_tail(&recv_node->node, &data_queue_mngt->free_rx_queue);
-        recv_node = NULL;
     }
 
     hif_info->trx_pipe.all_tx_queue = zt_queue_node_malloc(
                                           ZT_TX_MAX_DATA_QUEUE_NODE_NUM);
+    if (NULL == hif_info->trx_pipe.all_tx_queue)
+    {
+        LOG_E("[%s] transmit queue allocation failed", __func__);
+        goto init_fail;
+    }
+
     for (i = 0; i < ZT_TX_MAX_DATA_QUEUE_NODE_NUM; i++)
     {
-
-        send_node = hif_info->trx_pipe.all_tx_queue + i;
-        //LOG_I("[%s] [%d] send_node:%p",__func__,i,send_node);
+        send_node = &hif_info->trx_pipe.all_tx_queue[i];
         send_node->hif_node = hif_info;
-        send_node->real_size    = 0;
-        send_node->node_id      = i;
+        send_node->real_size = 0;
+        send_node->node_id = i;
         if (NULL != hif_info->ops->hif_alloc_buff &&
                 0 != hif_info->ops->hif_alloc_buff(send_node))
         {
-            if (HIF_USB == hif_info->hif_type)
-            {
-                LOG_E("[%s] hif_alloc_buff failed", __func__);
-                zt_free_skb((struct sk_buff *)send_node->buff);
-                zt_kfree(send_node);
-            }
-            continue;
+            LOG_E("[%s] transmit buffer allocation failed at %d", __func__, i);
+            goto init_fail;
         }
-
         zt_enque_tail(&send_node->node, &data_queue_mngt->free_tx_queue);
-        send_node = NULL;
     }
 
-
-    data_queue_mngt->is_init = zt_true;
-    data_queue_mngt->is_free_tx_stopped = zt_false;
-
     return ZT_RETURN_OK;
+
+init_fail:
+    zt_data_queue_mngt_term(hif_info);
+    return ZT_RETURN_FAIL;
 }
 
 
@@ -841,24 +844,17 @@ zt_s32 zt_data_queue_mngt_term(void *hif_node)
     hif_node_st  *hif_info      = (hif_node_st *)hif_node;
     data_queue_mngt_st *trxq    = &hif_info->trx_pipe;
 
-    if (trxq)
+    if (trxq && trxq->is_init)
     {
         tasklet_kill(&trxq->recv_task);
     }
 #if HIF_QUEUE_TX_WORKQUEUE_USE
-    if (trxq->tx_wq.ops)
+    if (trxq->tx_wq.ops && trxq->tx_wq.ops->workqueue_term)
     {
-        if (trxq->tx_wq.ops->workqueue_term)
-        {
-            trxq->tx_wq.ops->workqueue_term(&trxq->tx_wq);
-        }
-    }
-    else
-    {
-        return ZT_RETURN_OK;
+        trxq->tx_wq.ops->workqueue_term(&trxq->tx_wq);
     }
 #else
-    if (trxq)
+    if (trxq && trxq->is_init)
     {
         tasklet_kill(&trxq->send_task);
     }
@@ -932,6 +928,7 @@ zt_s32 zt_data_queue_mngt_term(void *hif_node)
     }
 
     zt_hif_queue_free_skb(&hif_info->trx_pipe.free_rx_queue_skb);
+    trxq->is_init = zt_false;
 
     return ZT_RETURN_OK;
 }

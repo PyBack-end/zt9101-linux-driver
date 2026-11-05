@@ -35,65 +35,64 @@ zt_s32 zt_80211_mgmt_ies_search(void *pvar, zt_u16 var_len,
                                 zt_u8 cmp_id,
                                 zt_80211_mgmt_ie_t **pout)
 {
-    zt_80211_mgmt_ie_t *pie = NULL;
-    zt_u8 *pstart = pvar;
-    zt_u16 offset = 0;
+    zt_u8 *cursor = pvar;
+    zt_u16 remaining = var_len;
 
     if (pvar == NULL || pout == NULL)
     {
         return ZT_RETURN_FAIL;
     }
+    *pout = NULL;
 
-    while (1)
+    while (remaining >= 2)
     {
-        pie = (zt_80211_mgmt_ie_t *)(pstart + offset);
-        if (pie->element_id == cmp_id)
-        {
-            *pout = pie;
-            return ZT_RETURN_OK;
-        }
-
-        offset += 2 + pie->len;
-        if (offset >= var_len)
+        zt_u16 ie_size = (zt_u16)cursor[1] + 2;
+        if (ie_size > remaining)
         {
             return ZT_RETURN_FAIL;
         }
+        if (cursor[0] == cmp_id)
+        {
+            *pout = (zt_80211_mgmt_ie_t *)cursor;
+            return ZT_RETURN_OK;
+        }
+        cursor += ie_size;
+        remaining -= ie_size;
     }
+    return ZT_RETURN_FAIL;
 }
 
 zt_s32 zt_80211_mgmt_ies_search_with_oui(void *pies, zt_u16 ies_len,
         zt_u8 cmp_id, zt_u8 *oui,
         zt_80211_mgmt_ie_t **ppie)
 {
-    zt_80211_mgmt_ie_t *pie;
-    zt_u8 *pstart = pies;
-    zt_u16 offset = 0;
+    zt_u8 *cursor = pies;
+    zt_u16 remaining = ies_len;
 
-    if (pies == NULL || ppie == NULL)
+    if (pies == NULL || oui == NULL || ppie == NULL)
     {
         return ZT_RETURN_FAIL;
     }
+    *ppie = NULL;
 
-    while (1)
+    while (remaining >= 2)
     {
-        pie = (zt_80211_mgmt_ie_t *)(pstart + offset);
-        if (pie->element_id == cmp_id)
-        {
-            if (zt_memcmp(pie->data, oui, 4) == 0)
-            {
-                *ppie = pie;
-                return ZT_RETURN_OK;
-            }
-        }
-
-        offset += 2 + pie->len;
-        if (offset >= ies_len)
+        zt_u16 ie_size = (zt_u16)cursor[1] + 2;
+        if (ie_size > remaining)
         {
             return ZT_RETURN_FAIL;
         }
+        if (cursor[0] == cmp_id && cursor[1] >= 4 &&
+                zt_memcmp(cursor + 2, oui, 4) == 0)
+        {
+            *ppie = (zt_80211_mgmt_ie_t *)cursor;
+            return ZT_RETURN_OK;
+        }
+        cursor += ie_size;
+        remaining -= ie_size;
     }
+    return ZT_RETURN_FAIL;
 }
-
 zt_u8 *zt_80211_set_fixed_ie(zt_u8 *pbuf, zt_u32 len, zt_u8 *source,
                              zt_u16 *frlen)
 {
@@ -159,7 +158,7 @@ zt_s32 zt_80211_mgmt_rsn_parse(void *prsn, zt_u16 len,
     zt_u16 cipher_suite_cnt;
     zt_s32 ret = 0;
 
-    if (prsn == NULL || len == 0)
+    if (prsn == NULL || len < ZT_OFFSETOF(zt_80211_mgmt_ie_t, data))
     {
         _80211_WARN("NULL point");
         ret = -1;
@@ -268,39 +267,57 @@ zt_s32 zt_80211_mgmt_rsn_survey(void *data, zt_u16 data_len,
                                 void **prsn_ie, zt_u16 *prsn_ie_len,
                                 zt_u32 *pgroup_cipher, zt_u32 *pairwise_cipher)
 {
-    zt_s32 ret;
+    zt_u8 *cursor = data;
+    zt_u16 remaining = data_len;
+    zt_s32 ret = -1;
 
-    zt_80211_mgmt_ie_t *pie = data;
-    zt_u16 ie_len = data_len;
-
-    do
+    if (prsn_ie)
     {
-        ret = zt_80211_mgmt_rsn_parse(pie, sizeof(*pie) + pie->len,
+        *prsn_ie = NULL;
+    }
+    if (prsn_ie_len)
+    {
+        *prsn_ie_len = 0;
+    }
+    if (pgroup_cipher)
+    {
+        *pgroup_cipher = 0;
+    }
+    if (pairwise_cipher)
+    {
+        *pairwise_cipher = 0;
+    }
+    if (data == NULL || data_len < 2)
+    {
+        return -1;
+    }
+
+    while (remaining >= 2)
+    {
+        zt_u16 ie_size = (zt_u16)cursor[1] + 2;
+        if (ie_size > remaining)
+        {
+            return -1;
+        }
+        ret = zt_80211_mgmt_rsn_parse(cursor, ie_size,
                                       pgroup_cipher, pairwise_cipher);
         if (!ret)
         {
             if (prsn_ie)
             {
-                *prsn_ie = pie;
+                *prsn_ie = cursor;
             }
             if (prsn_ie_len)
             {
-                *prsn_ie_len = ie_len;
+                *prsn_ie_len = ie_size;
             }
-            break;
+            return 0;
         }
-
-        ie_len -= sizeof(*pie) + pie->len;
-        if (ie_len <= sizeof(*pie))
-        {
-            break;
-        }
-        pie = (zt_80211_mgmt_ie_t *)&pie->data[pie->len];
-    } while (1);
-
+        cursor += ie_size;
+        remaining -= ie_size;
+    }
     return ret;
 }
-
 static zt_inline zt_u32 get_wpa_cipher_suite(zt_u32 cipher_suite)
 {
     zt_u32 oui;
@@ -342,7 +359,7 @@ zt_s32 zt_80211_mgmt_wpa_parse(void *pwpa, zt_u16 len,
     zt_u16 cipher_suite_cnt;
     zt_s32 ret = 0;
 
-    if (pwpa == NULL || len == 0)
+    if (pwpa == NULL || len < ZT_OFFSETOF(zt_80211_mgmt_ie_t, data))
     {
         _80211_WARN("invalid parameter");
         ret = -1;
@@ -471,39 +488,57 @@ zt_s32 zt_80211_mgmt_wpa_survey(void *data, zt_u16 data_len,
                                 void **pwpa_ie, zt_u16 *pwpa_ie_len,
                                 zt_u32 *pmulticast_cipher, zt_u32 *punicast_cipher)
 {
-    zt_s32 ret;
+    zt_u8 *cursor = data;
+    zt_u16 remaining = data_len;
+    zt_s32 ret = -1;
 
-    zt_80211_mgmt_ie_t *pie = data;
-    zt_u16 ie_len = data_len;
-
-    do
+    if (pwpa_ie)
     {
-        ret = zt_80211_mgmt_wpa_parse(pie, sizeof(*pie) + pie->len,
+        *pwpa_ie = NULL;
+    }
+    if (pwpa_ie_len)
+    {
+        *pwpa_ie_len = 0;
+    }
+    if (pmulticast_cipher)
+    {
+        *pmulticast_cipher = 0;
+    }
+    if (punicast_cipher)
+    {
+        *punicast_cipher = 0;
+    }
+    if (data == NULL || data_len < 2)
+    {
+        return -1;
+    }
+
+    while (remaining >= 2)
+    {
+        zt_u16 ie_size = (zt_u16)cursor[1] + 2;
+        if (ie_size > remaining)
+        {
+            return -1;
+        }
+        ret = zt_80211_mgmt_wpa_parse(cursor, ie_size,
                                       pmulticast_cipher, punicast_cipher);
         if (!ret)
         {
             if (pwpa_ie)
             {
-                *pwpa_ie = pie;
+                *pwpa_ie = cursor;
             }
             if (pwpa_ie_len)
             {
-                *pwpa_ie_len = ie_len;
+                *pwpa_ie_len = ie_size;
             }
-            break;
+            return 0;
         }
-
-        ie_len -= sizeof(*pie) + pie->len;
-        if (ie_len <= sizeof(*pie))
-        {
-            break;
-        }
-        pie = (zt_80211_mgmt_ie_t *)&pie->data[pie->len];
-    } while (1);
-
+        cursor += ie_size;
+        remaining -= ie_size;
+    }
     return ret;
 }
-
 zt_s32 zt_80211_mgmt_wmm_parse(void *pwmm, zt_u16 len)
 {
     zt_80211_wmm_param_ie_t *pie;

@@ -658,6 +658,22 @@ core_conn_maintain_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
     PT_END(pt);
 }
 
+static void keepalive_probe_rsp_drain(zt_msg_que_t *pmsg_que)
+{
+    zt_msg_t *pmsg;
+
+    /*
+     * Multiple probe responses may be queued before the MLME worker gets
+     * scheduled. They belong to this directed scan and must not satisfy a
+     * later keepalive attempt.
+     */
+    while (!zt_msg_get(pmsg_que, &pmsg) &&
+            pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+    }
+}
+
 static zt_pt_ret_t
 core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
                               zt_s32 *prsn)
@@ -666,57 +682,136 @@ core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
     mlme_info_t *pmlme_info = pnic_info->mlme_info;
     zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
     zt_msg_t *pmsg;
-    zt_s32 rst;
+    zt_s32 scan_reason = ZT_SCAN_TAG_DONE;
+    zt_bool response_received = zt_false;
+    wdn_net_info_st *pwdn_info = pmlme_info->pwdn_info;
 
     PT_BEGIN(pt);
 
+    if (pwdn_info == NULL)
     {
-        zt_wlan_ssid_t ssid = {0};
-        wdn_net_info_st *pwdn_info = pmlme_info->pwdn_info;
-        if (pwdn_info == NULL)
-        {
-            MLME_ERROR("wdn null");
-            *prsn = -1;
-            PT_EXIT(pt);
-        }
-        ssid.length = ZT_MIN(pwdn_info->ssid_len, ZT_80211_MAX_SSID_LEN);
-        zt_memcpy(&ssid.data, pwdn_info->ssid, ssid.length);
-        rst = zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
-                            (void *)pwdn_info->bssid,
-                            &ssid, 1,
-                            &pwdn_info->channel, 1);
-    }
-    if (rst)
-    {
-        MLME_WARN("start fail error code: %d", rst);
-        *prsn = -2;
+        MLME_ERROR("keepalive probe has no peer");
+        *prsn = ZT_KEEPALIVE_PROBE_FAILED;
         PT_EXIT(pt);
     }
 
+    keepalive_probe_rsp_drain(pmsg_que);
+
+    {
+        zt_wlan_ssid_t ssid = {0};
+        ssid.length = ZT_MIN(pwdn_info->ssid_len, ZT_80211_MAX_SSID_LEN);
+        zt_memcpy(&ssid.data, pwdn_info->ssid, ssid.length);
+        scan_reason = ZT_SCAN_TAG_DONE;
+        if (zt_scan_start(pnic_info, SCAN_TYPE_ACTIVE,
+                          (void *)pwdn_info->bssid,
+                          &ssid, 1,
+                          &pwdn_info->channel, 1))
+        {
+            MLME_WARN("keepalive probe scan start failed");
+            *prsn = ZT_KEEPALIVE_PROBE_FAILED;
+            PT_EXIT(pt);
+        }
+    }
+
     PT_INIT(pt_sub);
-    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, prsn)))
+    while (PT_SCHEDULE(zt_scan_thrd(pt_sub, pnic_info, &scan_reason)))
     {
         if (!zt_msg_get(pmsg_que, &pmsg))
         {
-            if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT ||
-                    pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+            if (pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+            {
+                zt_80211_mgmt_t *pmgmt = (void *)pmsg->value;
+                if (pmsg->len >= ZT_OFFSETOF(struct beacon_ie, variable) &&
+                        zt_80211_hdr_type_get(pmgmt) == ZT_80211_FRM_PROBE_RESP &&
+                        zt_80211_is_same_addr(pmgmt->da, nic_to_local_addr(pnic_info)) &&
+                        zt_80211_is_same_addr(pmgmt->sa, pwdn_info->bssid) &&
+                        zt_80211_is_same_addr(pmgmt->bssid, pwdn_info->bssid))
+                {
+                    response_received = zt_true;
+                }
+                zt_msg_del(pmsg_que, pmsg);
+                if (response_received)
+                {
+                    zt_scan_stop(pnic_info);
+                    PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info,
+                                                    &scan_reason));
+                    keepalive_probe_rsp_drain(pmsg_que);
+                    break;
+                }
+            }
+            else if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT)
             {
                 zt_msg_del(pmsg_que, pmsg);
-                MLME_DBG("abort scanning...");
                 zt_scan_stop(pnic_info);
-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, prsn));
-                break;
+                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info,
+                                                &scan_reason));
+                *prsn = ZT_KEEPALIVE_PROBE_ABORTED;
+                PT_EXIT(pt);
             }
             else if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
                      pmsg->tag == ZT_MLME_TAG_DEAUTH ||
                      pmsg->tag == ZT_MLME_TAG_DEASSOC)
             {
                 zt_scan_stop(pnic_info);
-                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info, prsn));
-                break;
+                PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info,
+                                                &scan_reason));
+                *prsn = ZT_KEEPALIVE_PROBE_ABORTED;
+                PT_EXIT(pt);
             }
         }
         PT_YIELD(pt);
+    }
+
+    /*
+     * The scan worker and the MLME worker are cooperative. A response can
+     * arrive just as the scan timer completes, so inspect the pending event
+     * once more before classifying a completed scan as a timeout.
+     */
+    if (!response_received && !zt_msg_get(pmsg_que, &pmsg))
+    {
+        if (pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+        {
+            zt_80211_mgmt_t *pmgmt = (void *)pmsg->value;
+            response_received =
+                pmsg->len >= ZT_OFFSETOF(struct beacon_ie, variable) &&
+                zt_80211_hdr_type_get(pmgmt) == ZT_80211_FRM_PROBE_RESP &&
+                zt_80211_is_same_addr(pmgmt->da, nic_to_local_addr(pnic_info)) &&
+                zt_80211_is_same_addr(pmgmt->sa, pwdn_info->bssid) &&
+                zt_80211_is_same_addr(pmgmt->bssid, pwdn_info->bssid);
+            zt_msg_del(pmsg_que, pmsg);
+        }
+        else if (pmsg->tag == ZT_MLME_TAG_SCAN_ABORT)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            *prsn = ZT_KEEPALIVE_PROBE_ABORTED;
+            PT_EXIT(pt);
+        }
+        else if (pmsg->tag == ZT_MLME_TAG_CONN_ABORT ||
+                 pmsg->tag == ZT_MLME_TAG_DEAUTH ||
+                 pmsg->tag == ZT_MLME_TAG_DEASSOC)
+        {
+            *prsn = ZT_KEEPALIVE_PROBE_ABORTED;
+            PT_EXIT(pt);
+        }
+    }
+
+    if (response_received)
+    {
+        keepalive_probe_rsp_drain(pmsg_que);
+        *prsn = ZT_KEEPALIVE_PROBE_RESPONDED;
+    }
+    else if (scan_reason == ZT_SCAN_TAG_DONE)
+    {
+        *prsn = ZT_KEEPALIVE_PROBE_TIMEOUT;
+    }
+    else if (scan_reason == ZT_SCAN_TAG_ABORT)
+    {
+        *prsn = ZT_KEEPALIVE_PROBE_ABORTED;
+    }
+    else
+    {
+        MLME_WARN("keepalive probe scan failed, reason: %d", scan_reason);
+        *prsn = ZT_KEEPALIVE_PROBE_FAILED;
     }
 
     PT_END(pt);
@@ -862,9 +957,22 @@ zt_pt_ret_t core_conn_maintain_msg_thrd(zt_pt_t *pt, nic_info_st *pnic_info)
         {
             zt_msg_del(pmsg_que, pmsg);
             MLME_INFO("keepalive...");
-            mlme_set_state(pnic_info, MLME_STATE_SCAN);
+            mlme_set_state(pnic_info, MLME_STATE_KEEPALIVE_SCAN);
             PT_SPAWN(pt, pt_sub,
                      core_conn_maintain_probe_thrd(pt_sub, pnic_info, &reason));
+            switch (reason)
+            {
+                case ZT_KEEPALIVE_PROBE_RESPONDED:
+                case ZT_KEEPALIVE_PROBE_TIMEOUT:
+                case ZT_KEEPALIVE_PROBE_ABORTED:
+                case ZT_KEEPALIVE_PROBE_FAILED:
+                    pmlme_info->keepalive_probe_result = reason;
+                    break;
+                default:
+                    pmlme_info->keepalive_probe_result =
+                        ZT_KEEPALIVE_PROBE_FAILED;
+                    break;
+            }
         }
 
         else if (pmsg->tag == ZT_MLME_TAG_DEAUTH ||
@@ -993,7 +1101,19 @@ core_conn_maintain_keepalive_thrd(zt_pt_t *pt,  nic_info_st *pnic_info)
 
     for (;;)
     {
-        zt_nic_null_xmit(pnic_info, pwdn_info, zt_false, 0);
+        rst = zt_nic_null_xmit(pnic_info, pwdn_info, zt_false, 0);
+        if (rst)
+        {
+            /*
+             * A failed null-frame submission is not evidence that the
+             * peer is unreachable. Back off and retry without entering
+             * the probe/deauthentication sequence.
+             */
+            MLME_WARN("keepalive null frame transmit failed, error code: %d", rst);
+            zt_timer_set(&pmlme_info->keep_alive_timer, 10 * 1000);
+            PT_WAIT_UNTIL(pt, zt_timer_expired(&pmlme_info->keep_alive_timer));
+            continue;
+        }
         PT_WAIT_WHILE(pt, pmlme_info->link_info.busy_traffic);
 
         pwdn_info->rx_pkt_stat_last = pwdn_info->rx_pkt_stat;
@@ -1017,22 +1137,47 @@ core_conn_maintain_keepalive_thrd(zt_pt_t *pt,  nic_info_st *pnic_info)
             }
         }
 
+        pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_PENDING;
         rst = mlme_msg_send(pnic_info, ZT_MLME_TAG_KEEPALIVE, NULL, 0);
         if (rst)
         {
+            pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_FAILED;
             MLME_WARN("mlme_msg_send fail, error code: %d", rst);
             continue;
         }
 
-        zt_timer_set(&pmlme_info->keep_alive_timer, 10 * 1000);
-        PT_WAIT_UNTIL(pt, zt_timer_expired(&pmlme_info->keep_alive_timer));
-        if (pwdn_info->rx_pkt_stat_last != pwdn_info->rx_pkt_stat)
+        /*
+         * The MLME message thread publishes the probe outcome only after
+         * the directed scan has completed or has been explicitly aborted.
+         */
+        PT_WAIT_UNTIL(pt, pmlme_info->keepalive_probe_result !=
+                      ZT_KEEPALIVE_PROBE_PENDING);
+
+        if (pmlme_info->keepalive_probe_result == ZT_KEEPALIVE_PROBE_RESPONDED)
         {
+            pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_IDLE;
             continue;
         }
+
+        if (pmlme_info->keepalive_probe_result != ZT_KEEPALIVE_PROBE_TIMEOUT)
+        {
+            MLME_WARN("keepalive probe did not complete normally, result: %d",
+                      pmlme_info->keepalive_probe_result);
+            pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_IDLE;
+            continue;
+        }
+
+        if (pwdn_info->rx_pkt_stat_last != pwdn_info->rx_pkt_stat)
+        {
+            pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_IDLE;
+            continue;
+        }
+
+        MLME_WARN("keepalive probe timed out without an AP response");
         rst = zt_mlme_deauth(pnic_info, zt_true, ZT_80211_REASON_DEAUTH_LEAVING);
         if (rst)
         {
+            pmlme_info->keepalive_probe_result = ZT_KEEPALIVE_PROBE_IDLE;
             MLME_WARN("zt_mlme_deauth fail, error code: %d", rst);
             continue;
         }
@@ -1566,6 +1711,12 @@ static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
     }
     if (value && len)
     {
+        if (len > pmsg->alloc_value_size)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            MLME_WARN("message length exceeds allocated capacity");
+            return -4;
+        }
         pmsg->len = len;
         zt_memcpy(pmsg->value, value, len);
     }
@@ -1575,7 +1726,7 @@ static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
     {
         zt_msg_del(pmsg_que, pmsg);
         MLME_WARN("zt_msg_push fail error code: %d", rst);
-        return -4;
+        return -5;
     }
 
     return 0;
@@ -1713,7 +1864,7 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
     zt_msg_t *pmsg;
     zt_s32 rst;
 
-    if (pnic_info == NULL || (pmgmt == NULL && mgmt_len == 0))
+    if (pnic_info == NULL || pmgmt == NULL || mgmt_len == 0)
     {
         return -1;
     }
@@ -1740,6 +1891,12 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
         return -4;
     }
     /* copy frame */
+    if (mgmt_len > pmsg->alloc_value_size)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+        MLME_WARN("scan response exceeds message capacity");
+        return -5;
+    }
     pmsg->len = mgmt_len;
     zt_memcpy(pmsg->value, pmgmt, mgmt_len);
     rst = zt_msg_push(pmsg_que, pmsg);
@@ -1747,7 +1904,7 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
     {
         zt_msg_del(pmsg_que, pmsg);
         MLME_WARN("msg push fail error code: %d", rst);
-        return -5;
+        return -6;
     }
 
     return 0;

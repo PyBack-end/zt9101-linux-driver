@@ -96,10 +96,15 @@ static zt_s32 fwdl_wait_fw_startup(hif_node_st *hif_node)
 zt_s32 zt_fw_download(void *node)
 {
     hif_node_st *hif_node = node;
-    struct hif_firmware_info firmware_info;
+    struct hif_firmware_info firmware_info = { 0 };
     zt_u8 re_dw_cnt;
     int ret;
     zt_u8 value8;
+
+    if (hif_node == NULL || hif_node->drv_ops == NULL)
+    {
+        return -1;
+    }
 
     re_dw_cnt = 0;
     DW_ALL_FW_FAIL_RETRY:
@@ -107,6 +112,7 @@ zt_s32 zt_fw_download(void *node)
     ret = hif_firmware_read_get(hif_node->drv_ops->firmware_no, &firmware_info);
     if (ret < 0)
     {
+        hif_firmware_read_free(&firmware_info);
         LOG_E("Can't get firmware for downloading");
         return -1;
     }
@@ -115,7 +121,13 @@ zt_s32 zt_fw_download(void *node)
     zt_hw_mcu_disable(hif_node);
     zt_hw_mcu_enable(hif_node);
 
-    hif_io_read(hif_node, 0, 0xf4, &value8, sizeof(value8));
+    value8 = 0;
+    if (hif_io_read(hif_node, 0, 0xf4, &value8, sizeof(value8)) < 0)
+    {
+        FWDL_ERROR("failed to read efuse status");
+        hif_firmware_read_free(&firmware_info);
+        return -1;
+    }
     if (value8 & ZT_BIT(0))
     {
         FWDL_ERROR("efuse setting error!");
@@ -133,22 +145,24 @@ zt_s32 zt_fw_download(void *node)
                                (zt_u8 *)firmware_info.fw0, firmware_info.fw0_size))
         {
             re_dw_cnt++;
-            if(re_dw_cnt < 3) {
+            if (re_dw_cnt < 3)
+            {
+                hif_firmware_read_free(&firmware_info);
                 goto DW_ALL_FW_FAIL_RETRY;
-            } else {
-                goto DW_ALL_FW_FAIL_RETURN;
             }
+            goto DW_ALL_FW_FAIL_RETURN;
         }
 
         if (hif_write_firmware(hif_node, 1,
                                (zt_u8 *)firmware_info.fw1, firmware_info.fw1_size))
         {
             re_dw_cnt++;
-            if(re_dw_cnt < 3) {
+            if (re_dw_cnt < 3)
+            {
+                hif_firmware_read_free(&firmware_info);
                 goto DW_ALL_FW_FAIL_RETRY;
-            } else {
-                goto DW_ALL_FW_FAIL_RETURN;
             }
+            goto DW_ALL_FW_FAIL_RETURN;
         }
 
         FWDL_DBG("===>fw download elapsed: %d ms", zt_timer_elapsed(&timer));

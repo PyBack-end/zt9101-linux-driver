@@ -1020,6 +1020,12 @@ zt_s32 zt_assoc_frame_parse(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
             ASSOC_WARN("msg new fail error fail: %d", rst);
             return -6;
         }
+        if (mgmt_len > pmsg->alloc_value_size)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            ASSOC_WARN("association response exceeds message capacity");
+            return -7;
+        }
         pmsg->len = mgmt_len;
         zt_memcpy(pmsg->value, pmgmt, mgmt_len);
         rst = zt_msg_push(pmsg_que, pmsg);
@@ -1027,7 +1033,7 @@ zt_s32 zt_assoc_frame_parse(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
         {
             zt_msg_del(pmsg_que, pmsg);
             ASSOC_WARN("msg push fail error fail: %d", rst);
-            return -7;
+            return -8;
         }
     }
 

@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#include <linux/mutex.h>
 #include <linux/etherdevice.h>
 #include <linux/init.h>
 #include <linux/moduleparam.h>
@@ -87,6 +88,8 @@ typedef struct zt_widev_priv
 
     struct cfg80211_scan_request *pscan_request;
     zt_os_api_lock_t scan_req_lock;
+    struct mutex scan_req_mutex;
+    zt_bool scan_req_finalizing;
 
     struct net_device *pmon_ndev;
     zt_s8 ifname_mon[IFNAMSIZ + 1];

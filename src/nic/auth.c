@@ -837,7 +837,7 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
 
     if (pwdn_info == NULL)
     {
-        AUTH_ERROR("pwdn_info None pointer");
+        AUTH_ERROR("[AUTH-RX] WDN lookup failed; management response cannot be queued");
         return -2;
     }
 
@@ -848,6 +848,8 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
         zt_mlme_get_state(pnic_info, &state);
         if (state != MLME_STATE_AUTH)
         {
+            AUTH_WARN("[AUTH-RX] unexpected MLME state=%d (expected AUTH)",
+                      state);
             return -3;
         }
     }
@@ -855,6 +857,13 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
     if (!zt_80211_is_same_addr(pmgmt->da, nic_to_local_addr(pnic_info)) ||
             !zt_80211_is_same_addr(pwdn_info->bssid, zt_wlan_get_cur_bssid(pnic_info)))
     {
+        AUTH_WARN("[AUTH-RX] address mismatch: DA="ZT_MAC_FMT
+                  " local="ZT_MAC_FMT" WDN-BSSID="ZT_MAC_FMT
+                  " current-BSSID="ZT_MAC_FMT,
+                  ZT_MAC_ARG(pmgmt->da),
+                  ZT_MAC_ARG(nic_to_local_addr(pnic_info)),
+                  ZT_MAC_ARG(pwdn_info->bssid),
+                  ZT_MAC_ARG(zt_wlan_get_cur_bssid(pnic_info)));
         return -4;
     }
 
@@ -877,6 +886,12 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
             AUTH_DBG("new msg fail, error code: %d", rst);
             return -6;
         }
+        if (mgmt_len > pmsg->alloc_value_size)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            AUTH_WARN("auth response exceeds message capacity");
+            return -7;
+        }
         pmsg->len = mgmt_len;
         zt_memcpy(pmsg->value, pmgmt, mgmt_len);
         rst = zt_msg_push(pmsg_que, pmsg);
@@ -884,7 +899,7 @@ zt_s32 auth_sta_recv(nic_info_st *pnic_info, wdn_net_info_st *pwdn_info,
         {
             zt_msg_del(pmsg_que, pmsg);
             AUTH_DBG("push msg fail, error code: %d", rst);
-            return -7;
+            return -8;
         }
     }
 

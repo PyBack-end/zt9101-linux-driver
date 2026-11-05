@@ -468,7 +468,18 @@ zt_s32 zt_scan_filter(nic_info_st *pnic_info,
 		    {
 		        mlme_state_e state;
 		        zt_mlme_get_state(pnic_info, &state);
-		        if (state == MLME_STATE_CONN_SCAN || state == MLME_STATE_IBSS_CONN_SCAN)
+		        if (state == MLME_STATE_KEEPALIVE_SCAN)
+		        {
+		            if (zt_80211_hdr_type_get(pmgmt) == ZT_80211_FRM_PROBE_RESP &&
+		                    zt_80211_is_same_addr(pmgmt->da, nic_to_local_addr(pnic_info)) &&
+		                    zt_80211_is_same_addr(pmgmt->sa, pscan_info->preq->bssid) &&
+		                    zt_80211_is_same_addr(pmgmt->bssid, pscan_info->preq->bssid))
+		            {
+		                zt_mlme_conn_scan_rsp(pnic_info, pmgmt, mgmt_len);
+		            }
+		        }
+		        else if (state == MLME_STATE_CONN_SCAN ||
+		                 state == MLME_STATE_IBSS_CONN_SCAN)
 		        {
 		            zt_mlme_conn_scan_rsp(pnic_info, pmgmt, mgmt_len);
 		        }
@@ -485,7 +496,17 @@ zt_s32 zt_scan_filter(nic_info_st *pnic_info,
 		    {
 		        mlme_state_e state;
 		        zt_mlme_get_state(pnic_info, &state);
-		        if (state == MLME_STATE_CONN_SCAN || state == MLME_STATE_IBSS_CONN_SCAN)
+		        if (state == MLME_STATE_KEEPALIVE_SCAN)
+		        {
+		            if (zt_80211_hdr_type_get(pmgmt) == ZT_80211_FRM_PROBE_RESP &&
+		                    zt_80211_is_same_addr(pmgmt->da, nic_to_local_addr(pnic_info)) &&
+		                    zt_80211_is_same_addr(pmgmt->bssid, pscan_info->preq->bssid))
+		            {
+		                zt_mlme_conn_scan_rsp(pnic_info, pmgmt, mgmt_len);
+		            }
+		        }
+		        else if (state == MLME_STATE_CONN_SCAN ||
+		                 state == MLME_STATE_IBSS_CONN_SCAN)
 		        {
 		            zt_mlme_conn_scan_rsp(pnic_info, pmgmt, mgmt_len);
 		        }
@@ -769,7 +790,7 @@ done:
     /* refresh scan queue */
     zt_wlan_mgmt_scan_que_refresh(pnic_info,
                                   pscan_info->preq->ch_map,
-                                  pscan_info->ch_idx);
+                                  pscan_info->preq->ch_num);
 
     if (!zt_p2p_is_valid(pnic_info) &&
             pscan_info->preq->type == SCAN_TYPE_ACTIVE)

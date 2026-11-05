@@ -77,8 +77,13 @@ zt_s32 zt_os_api_file_read(zt_file *file, loff_t offset,
     return ret;
 }
 
-size_t zt_os_api_file_size(zt_file *file)
+loff_t zt_os_api_file_size(zt_file *file)
 {
+    if (file == NULL)
+    {
+        return -EINVAL;
+    }
+
     return vfs_llseek(file, 0L, SEEK_END);
 }
 

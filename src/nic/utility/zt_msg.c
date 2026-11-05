@@ -74,6 +74,7 @@ zt_s32 zt_msg_new(zt_msg_que_t *pmsg_que, zt_msg_tag_t tag, zt_msg_t **pnew_msg)
         if (pmsg->tag == tag)
         {
             rst = _msg_pop(pmsg);
+            pmsg->len = 0;
             *pnew_msg = pmsg;
             goto exit;
         }

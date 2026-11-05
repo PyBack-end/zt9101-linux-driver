@@ -52,8 +52,25 @@ struct cfg80211_crypt
     zt_u8 set_tx;
     zt_u8 idx;
     zt_u16 key_len;
-    zt_u8 key[0];
+    zt_u8 key[];
 } ;
+
+static zt_bool cfg80211_key_len_valid(zt_u32 cipher, zt_u32 key_len)
+{
+    switch (cipher)
+    {
+        case WLAN_CIPHER_SUITE_WEP40:
+            return key_len == 5;
+        case WLAN_CIPHER_SUITE_WEP104:
+            return key_len == 13;
+        case WLAN_CIPHER_SUITE_TKIP:
+            return key_len == 32;
+        case WLAN_CIPHER_SUITE_CCMP:
+            return key_len == 16;
+        default:
+            return zt_false;
+    }
+}
 
 zt_s32 zt_cfg80211_p2p_rx_mgmt(void *nic_info, void *param, zt_u32 param_len);
 zt_s32 zt_cfg80211_remain_on_channel_expired(void *nic, void *param,
@@ -497,8 +514,9 @@ static zt_s32 cfg80211_ap_set_encryption(nic_info_st *pnic_info,
 
     CFG80211_DBG();
 
-    if (param_len <
-            ZT_FIELD_SIZEOF(struct cfg80211_crypt, key) + param->key_len)
+    if (param == NULL ||
+            param_len != ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len ||
+            !cfg80211_key_len_valid(param->alg, param->key_len))
     {
         CFG80211_WARN("param_len invalid !!!!!!!");
         res = -EINVAL;
@@ -719,10 +737,11 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
 
     CFG80211_DBG();
 
-    if (param_len !=
-            ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len)
+    if (param == NULL ||
+            param_len != ZT_OFFSETOF(struct cfg80211_crypt, key) + param->key_len ||
+            !cfg80211_key_len_valid(param->alg, param->key_len))
     {
-        CFG80211_WARN("param_len invalid !!!!!!!");
+        CFG80211_WARN("invalid key parameters");
         res = -EINVAL;
         goto exit;
     }
@@ -784,21 +803,25 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
                 zt_memcpy(pwdn_info->dot118021x_UncstKey.skey, param->key,
                           min_t(zt_u16, param->key_len, 16));
 
-                if (param->alg == WLAN_CIPHER_SUITE_TKIP) /* set mic key */
+                if (param->alg == WLAN_CIPHER_SUITE_TKIP)
                 {
-                    /* KEK PTK128~255 */
                     zt_memcpy(pwdn_info->dot11tkiptxmickey.skey,
-                              &(param->key[16]), 8); /* PTK128~191 */
+                              &param->key[16], 8);
                     zt_memcpy(pwdn_info->dot11tkiprxmickey.skey,
-                              &(param->key[24]), 8); /* PTK192~255 */
+                              &param->key[24], 8);
                     psec_info->busetkipkey = zt_true;
                 }
-                if (param->alg == WLAN_CIPHER_SUITE_CCMP)
+                else if (param->alg == WLAN_CIPHER_SUITE_CCMP)
                 {
                     CFG80211_DBG("sta_hw_set_unicast_key");
                     zt_sec_sta_set_unicast_key(pnic_info, &pwdn_info->unicast_cam_id,
                                                pwdn_info->dot118021XPrivacy,
                                                pwdn_info->mac, pwdn_info->dot118021x_UncstKey.skey);
+                }
+                else
+                {
+                    res = -EINVAL;
+                    goto exit;
                 }
             }
             else /* group key */
@@ -808,10 +831,19 @@ static zt_s32 cfg80211_sta_set_encryption(struct net_device *dev,
                           param->key,
                           min_t(zt_u16, param->key_len, 16));
 
-                zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
-                          &param->key, 8);
-                zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
-                          &param->key[8], 8);
+                if (param->alg == WLAN_CIPHER_SUITE_TKIP)
+                {
+                    zt_memcpy(psec_info->dot118021XGrptxmickey[param->idx].skey,
+                              &param->key[16], 8);
+                    zt_memcpy(psec_info->dot118021XGrprxmickey[param->idx].skey,
+                              &param->key[24], 8);
+                    psec_info->busetkipkey = zt_true;
+                }
+                else if (param->alg != WLAN_CIPHER_SUITE_CCMP)
+                {
+                    res = -EINVAL;
+                    goto exit;
+                }
                 psec_info->binstallGrpkey = true;
                 psec_info->dot118021XGrpKeyid = param->idx;
                 if (psec_info->dot118021XGrpPrivacy == _AES_)
@@ -905,21 +937,39 @@ static zt_s32 _add_key_cb(struct wiphy *wiphy, struct net_device *ndev,
 #endif
                           struct key_params *params)
 {
-    ndev_priv_st *pndev_priv = netdev_priv(ndev);
-    nic_info_st *pnic_info = pndev_priv->nic;
+    ndev_priv_st *pndev_priv;
+    nic_info_st *pnic_info;
     zt_u32 param_len;
     struct cfg80211_crypt *param = NULL;
     zt_s32 res = 0;
 
-    CFG80211_INFO("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
+    /* MAC address logging follows validated netdev lookup below. */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
     CFG80211_DBG("pairwise=%d\n", pairwise);
 #endif
 
+    if (ndev == NULL || params == NULL)
+    {
+        return -EINVAL;
+    }
+    pndev_priv = netdev_priv(ndev);
+    if (pndev_priv == NULL || pndev_priv->nic == NULL)
+    {
+        return -EINVAL;
+    }
+    pnic_info = pndev_priv->nic;
+    CFG80211_INFO("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
+
     if (pnic_info->is_driver_critical)
     {
         CFG80211_WARN("driver enter crital");
+        return -EINVAL;
+    }
+    if (key_index >= ZT_80211_WEP_KEYS || params->key == NULL ||
+            !cfg80211_key_len_valid(params->cipher, params->key_len))
+    {
+        CFG80211_WARN("invalid key index, cipher or key length");
         return -EINVAL;
     }
 
@@ -1340,36 +1390,59 @@ static zt_s32 _cfg80211_change_iface(struct wiphy *wiphy,
 
 void zt_cfg80211_scan_done_event_up(nic_info_st *pnic_info, zt_bool babort)
 {
-    struct zt_widev_priv *pwdev_info = pnic_info->widev_priv;
+    struct zt_widev_priv *pwdev_info;
+    struct cfg80211_scan_request *req = NULL;
+    zt_bool notify = zt_false;
 #if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
     struct cfg80211_scan_info info;
+#endif
 
+    if (pnic_info == NULL || pnic_info->widev_priv == NULL)
+    {
+        return;
+    }
+
+    pwdev_info = pnic_info->widev_priv;
+#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
     zt_memset(&info, 0, sizeof(info));
     info.aborted = babort;
 #endif
+
+    mutex_lock(&pwdev_info->scan_req_mutex);
     zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
-    if (pwdev_info->pscan_request != NULL)
+    req = pwdev_info->pscan_request;
+    pwdev_info->pscan_request = NULL;
+    pwdev_info->scan_req_finalizing = zt_false;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    if (req != NULL)
     {
-        LOG_W("[%s]: with scan req", __func__);
-        if (pwdev_info->pscan_request->wiphy == pnic_info->pwiphy)
+        if (req->wiphy != pnic_info->pwiphy)
         {
+            LOG_W("[%s]: scan request wiphy mismatch; completing as aborted",
+                  __func__);
+            babort = zt_true;
 #if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
-            cfg80211_scan_done(pwdev_info->pscan_request, &info);
-#else
-            cfg80211_scan_done(pwdev_info->pscan_request, babort);
+            info.aborted = true;
 #endif
         }
-        else
-        {
-            LOG_W("[%s]: wrong compare", __func__);
-        }
-        pwdev_info->pscan_request = NULL;
+        notify = zt_true;
     }
     else
     {
-        LOG_W("[%s]: scan req is NULL", __func__);
+        LOG_W("[%s]: scan request is NULL", __func__);
     }
-    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    /* cfg80211 may release the request in this callback: never hold the spinlock. */
+    if (notify)
+    {
+#if (KERNEL_VERSION(4, 7, 0) <= LINUX_VERSION_CODE)
+        cfg80211_scan_done(req, &info);
+#else
+        cfg80211_scan_done(req, babort);
+#endif
+    }
+    mutex_unlock(&pwdev_info->scan_req_mutex);
 }
 
 static zt_u64 cfg80211_get_timestamp_us(void)
@@ -1812,8 +1885,9 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
     zt_wlan_mgmt_scan_que_node_t *pscan_que_node = NULL;
     zt_wlan_mgmt_scan_que_for_rst_e scan_que_for_rst;
 
-    struct zt_widev_priv *pwdev_info = pnic_info->widev_priv;
-    struct cfg80211_scan_request *req = pwdev_info->pscan_request;
+    struct zt_widev_priv *pwdev_info;
+    struct cfg80211_scan_request *req = NULL;
+    zt_bool already_finalizing = zt_false;
 
     zt_u8 ch_num = 0;
     p2p_info_st *p2p_info = NULL;
@@ -1823,6 +1897,24 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
     zt_s32 p2p_scan_ssid_found = 0;
     zt_s32 p2p_scan_ssid_search = 0;
 
+    if (pnic_info == NULL || pnic_info->widev_priv == NULL)
+    {
+        return 0;
+    }
+
+    pwdev_info = pnic_info->widev_priv;
+    mutex_lock(&pwdev_info->scan_req_mutex);
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    req = pwdev_info->pscan_request;
+    already_finalizing = pwdev_info->scan_req_finalizing;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+
+    if (req == NULL || already_finalizing)
+    {
+        mutex_unlock(&pwdev_info->scan_req_mutex);
+        return 0;
+    }
+
     CFG80211_DBG("[%d] scan complete", pnic_info->ndev_id);
 
     if (zt_p2p_is_valid(pnic_info))
@@ -1831,7 +1923,9 @@ zt_s32 zt_cfg80211_scan_complete(nic_info_st *pnic_info)
 
         ch_num = p2p_info->ext_channel_num + req->n_channels;
 
-        if (req->ssids != NULL && 0 == zt_memcmp(req->ssids->ssid, "DIRECT-", 7) &&
+        if (req->n_ssids != 0 && req->ssids != NULL &&
+        req->ssids[0].ssid_len >= 7 &&
+        0 == zt_memcmp(req->ssids[0].ssid, "DIRECT-", 7) &&
             req->ssids[0].ssid_len > 7 && (p2p_info->go_negoing & ZT_BIT(P2P_INVIT_RESP)))
         {
             /* need to check p2p ssid found or not, only after invitation resp */
@@ -1910,6 +2004,7 @@ INFORM_BSS:
             p2p_info->scan_times++;
             CFG80211_WARN("[%d] scan times : %d, ret : %d", pnic_info->ndev_id, p2p_info->scan_times, ret);
             if(!ret){
+                mutex_unlock(&pwdev_info->scan_req_mutex);
                 return 0;
             }else{
                 p2p_info->scan_times = 0;
@@ -1918,6 +2013,14 @@ INFORM_BSS:
             p2p_info->scan_times = 0;
         }
     }
+
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    if (pwdev_info->pscan_request == req)
+    {
+        pwdev_info->scan_req_finalizing = zt_true;
+    }
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+    mutex_unlock(&pwdev_info->scan_req_mutex);
 
     return 1;
 
@@ -1998,40 +2101,78 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
     zt_u8 scan_time_for_one_ch = 6;
     zt_u8 scan_time = 3;
     zt_u8 social_channel = 0, ext_channel = 0;
-    zt_u8 req_ch_nums    = req->n_channels;
+    zt_u8 req_ch_nums = 0;
 
     CFG80211_DBG("scan start!");
 
     if (req == NULL)
     {
-        ret = -EINVAL;
-        return ret;
+        return -EINVAL;
     }
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0))
-    if (ndev == NULL)
-    {
-        ret = -EINVAL;
-        return ret;
-    }
-#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0))
+    if (req->wdev == NULL || req->wdev->netdev == NULL)
+    {
+        return -EINVAL;
+    }
     ndev = req->wdev->netdev;
 #endif
 
+    if (ndev == NULL || req->n_channels == 0 ||
+        req->n_channels > ZT_SCAN_REQ_CHANNEL_NUM || req->channels == NULL ||
+        req->n_ssids > ZT_SCAN_REQ_SSID_NUM ||
+        (req->n_ssids != 0 && req->ssids == NULL) ||
+        (req->ie_len != 0 && req->ie == NULL))
+    {
+        return -EINVAL;
+    }
+
+    for (i = 0; i < req->n_channels; i++)
+    {
+        if (req->channels[i] == NULL)
+        {
+            return -EINVAL;
+        }
+    }
+
+    for (i = 0; i < req->n_ssids; i++)
+    {
+        if (req->ssids[i].ssid_len > IEEE80211_MAX_SSID_LEN)
+        {
+            return -EINVAL;
+        }
+    }
+
+    req_ch_nums = req->n_channels;
     pndev_priv = netdev_priv(ndev);
+    if (pndev_priv == NULL || pndev_priv->nic == NULL)
+    {
+        return -EINVAL;
+    }
     pnic_info = pndev_priv->nic;
+    pwdev_info = pnic_info->widev_priv;
+    if (pwdev_info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    mutex_lock(&pwdev_info->scan_req_mutex);
+    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
+    if (pwdev_info->pscan_request != NULL)
+    {
+        zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
+        mutex_unlock(&pwdev_info->scan_req_mutex);
+        return -EBUSY;
+    }
+    pwdev_info->pscan_request = req;
+    pwdev_info->scan_req_finalizing = zt_false;
+    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
 
     CFG80211_INFO("[%d] mac addr: "ZT_MAC_FMT, pnic_info->ndev_id,
                   ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
 
     pmlme_info = (mlme_info_t *)pnic_info->mlme_info;
     pscan_info = pnic_info->scan_info;
-    pwdev_info = pnic_info->widev_priv;
-    zt_os_api_lock_lock(&pwdev_info->scan_req_lock);
-    pwdev_info->pscan_request = req;
-    zt_os_api_lock_unlock(&pwdev_info->scan_req_lock);
 
     if (pnic_info->buddy_nic)
     {
@@ -2048,9 +2189,11 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
         }
     }
 
-    LOG_I("this is zdg:: req->ssid:: %s\n", req->ssids);
+    LOG_I("scan request: channels=%u ssids=%u", req->n_channels, req->n_ssids);
 
-    if (req->ssids != NULL && 0 == zt_memcmp(req->ssids->ssid, "DIRECT-", 7)
+    if (req->n_ssids != 0 && req->ssids != NULL &&
+        req->ssids[0].ssid_len >= 7 &&
+        0 == zt_memcmp(req->ssids[0].ssid, "DIRECT-", 7)
             && zt_p2p_get_ie((zt_u8 *) req->ie, req->ie_len, NULL, NULL))
     {
         if (req->ssids->ssid_len == 7)
@@ -2261,6 +2404,7 @@ static zt_s32 _call_scan_cb(struct wiphy *wiphy
         scan_done = zt_true;
 
 exit:
+    mutex_unlock(&pwdev_info->scan_req_mutex);
     if (scan_done == zt_true)
     {
         if(zt_cfg80211_scan_complete(pnic_info)){
@@ -3782,7 +3926,7 @@ static zt_s32 cfg80211_change_beacon(struct wiphy *wiphy,
     CFG80211_DBG("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
 
     ret =
-        add_beacon(pnic_info, 
+        add_beacon(pnic_info,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0))
 		   info->beacon.head, info->beacon.head_len, info->beacon.tail,
                    info->beacon.tail_len
@@ -4393,7 +4537,9 @@ zt_s32 zt_cfg80211_alloc(nic_info_st *pnic_info)
     pwidev_priv->ifname_mon[0]  = '\0';
     pwidev_priv->pnic_info      = pnic_info;
     pwidev_priv->pscan_request  = NULL;
+    pwidev_priv->scan_req_finalizing = zt_false;
     zt_os_api_lock_init(&pwidev_priv->scan_req_lock, ZT_LOCK_TYPE_BH);
+    mutex_init(&pwidev_priv->scan_req_mutex);
     pwidev_priv->power_mgmt     = zt_false;
 
     pwidev_priv->bandroid_scan = zt_true;
@@ -4424,6 +4570,8 @@ void zt_cfg80211_widev_unreg(nic_info_st *pnic_info)
     CFG80211_DBG("ndev_id:%d", pnic_info->ndev_id);
 
     zt_scan_wait_done(pnic_info, zt_true, 400);
+    /* A timed-out scan must not leave cfg80211 holding a request into teardown. */
+    zt_cfg80211_scan_done_event_up(pnic_info, zt_true);
 
     pwidev = pnic_info->pwidev;
     pndev = pnic_info->ndev;

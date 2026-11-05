@@ -495,10 +495,12 @@ firmware_file_fail:
     pos = 0;
     zt_memcpy((zt_u8 *)&fw_file_head, &fw_data[pos], sizeof(fw_file_head));
     if ((fw_file_head.magic_number != 0xaffa) ||
-            (fw_file_head.interface_type != 0x9188))
+            (fw_file_head.interface_type != 0x9188) ||
+            fw_file_head.firmware_num != 2)
     {
-        LOG_E("firmware format error, magic:0x%x, type:0x%x",
-              fw_file_head.magic_number, fw_file_head.interface_type);
+        LOG_E("firmware format error, magic:0x%x, type:0x%x, entries:%u",
+              fw_file_head.magic_number, fw_file_head.interface_type,
+              fw_file_head.firmware_num);
         return -2;
     }
 
@@ -510,6 +512,11 @@ firmware_file_fail:
         zt_memcpy((zt_u8 *)&fw_head, &fw_data[pos], sizeof(fw_head));
         if (fw_head.type == 0)
         {
+            if (firmware_info->fw0 != NULL || fw_head.length == 0)
+            {
+                zt_memset(firmware_info, 0, sizeof(*firmware_info));
+                return -2;
+            }
             LOG_D("FW0 Ver: %d.%d.%d.%d, size:%dBytes",
                   fw_head.version & 0xFF, (fw_head.version >> 8) & 0xFF,
                   (fw_head.version >> 16) & 0xFF, (fw_head.version >> 24) & 0xFF,
@@ -517,8 +524,13 @@ firmware_file_fail:
             firmware_info->fw0_size = fw_head.length;
             firmware_info->fw0 = (zt_s8 *)&fw_data[fw_head.offset];
         }
-        else
+        else if (fw_head.type == 1)
         {
+            if (firmware_info->fw1 != NULL || fw_head.length < 32)
+            {
+                zt_memset(firmware_info, 0, sizeof(*firmware_info));
+                return -2;
+            }
             LOG_D("FW1 Ver: %d.%d.%d.%d, size:%dBytes",
                   fw_head.version & 0xFF, (fw_head.version >> 8) & 0xFF,
                   (fw_head.version >> 16) & 0xFF, (fw_head.version >> 24) & 0xFF,
@@ -526,6 +538,11 @@ firmware_file_fail:
             fw_head.length -= 32;
             firmware_info->fw1_size = fw_head.length;
             firmware_info->fw1 = (zt_s8 *)&fw_data[fw_head.offset + 32];
+        }
+        else
+        {
+            zt_memset(firmware_info, 0, sizeof(*firmware_info));
+            return -2;
         }
         pos += sizeof(fw_head);
     }

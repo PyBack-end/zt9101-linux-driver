@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/version.h>
 #include <linux/types.h>
 #include <linux/utsname.h>
@@ -281,88 +282,195 @@ static void dump_kernel_version(void)
 #include "./../../../fw/zt9101V30_fw_data.c"
 #endif
 
+#ifdef CONFIG_FW_FILE
+static zt_bool hif_firmware_file_read_exact(zt_file *file, loff_t offset,
+                                             void *buffer, zt_u32 length)
+{
+    zt_s32 ret;
+
+    if (length > INT_MAX)
+    {
+        return zt_false;
+    }
+
+    ret = zt_os_api_file_read(file, offset, (zt_u8 *)buffer, length);
+    return ret == (zt_s32)length ? zt_true : zt_false;
+}
+#endif
+
 int hif_firmware_read_get(zt_u8 firmware_no,
                           struct hif_firmware_info *firmware_info)
 {
-#ifdef CONFIG_FW_FILE
-    const char *fw_full_puth;
-    zt_file *file;
-    zt_s32 i;
-    loff_t pos;
-    fw_file_header_t fw_file_head;
-    fw_header_t fw_head;
-    hif_mngent_st *hif_mngent = hif_mngent_get();
-
-    if (firmware_no > 1)
+    if (firmware_info == NULL)
     {
-        LOG_E("firmware no error, exit");
         return -1;
     }
 
-    fw_full_puth = hif_mngent->fw_full_path[firmware_no];
-    LOG_I("download firmware fullpath:%s", fw_full_puth);
-    file = zt_os_api_file_open(fw_full_puth);
-    if (file == NULL)
-    {
-        LOG_E("firmware open failed");
-        return -2;
-    }
-    pos = 0;
-    zt_os_api_file_read(file, pos, (zt_u8 *)&fw_file_head,
-                        sizeof(fw_file_head));
-    if ((fw_file_head.magic_number != 0xaffa) ||
-            (fw_file_head.interface_type != 0x9188))
-    {
-        LOG_E("firmware format error, magic:0x%x, type:0x%x",
-              fw_file_head.magic_number, fw_file_head.interface_type);
-        zt_os_api_file_close(file);
-        return -2;
-    }
+    zt_memset(firmware_info, 0, sizeof(*firmware_info));
 
-    firmware_info->fw_rom_type = fw_file_head.rom_type;
-    pos += sizeof(fw_file_head);
-    for (i = 0; i < fw_file_head.firmware_num; i++)
+#ifdef CONFIG_FW_FILE
     {
-        zt_memset(&fw_head, 0, sizeof(fw_head));
-        zt_os_api_file_read(file, pos, (zt_u8 *)&fw_head, sizeof(fw_head));
-        if (fw_head.type == 0)
+        const char *fw_full_path;
+        zt_file *file;
+        loff_t file_size;
+        loff_t pos;
+        loff_t table_end;
+        fw_file_header_t file_header;
+        fw_header_t fw_header;
+        hif_mngent_st *hif_mngent = hif_mngent_get();
+        zt_u8 i;
+        zt_bool have_fw0 = zt_false;
+        zt_bool have_fw1 = zt_false;
+        int ret = -2;
+
+        if (firmware_no > 1 || hif_mngent == NULL)
         {
-            LOG_D("FW0 Ver: %d.%d.%d.%d, size:%dBytes",
-                  fw_head.version & 0xFF, (fw_head.version >> 8) & 0xFF,
-                  (fw_head.version >> 16) & 0xFF, (fw_head.version >> 24) & 0xFF,
-                  fw_head.length);
-            firmware_info->fw0_size = fw_head.length;
-            firmware_info->fw0 = zt_kzalloc(fw_head.length);
-            if (NULL == firmware_info->fw0)
-            {
-                LOG_E("firmware0 zt_kzalloc failed");
-                zt_os_api_file_close(file);
-                return -3;
-            }
-            zt_os_api_file_read(file, fw_head.offset, (zt_u8 *)firmware_info->fw0,
-                                fw_head.length);
+            LOG_E("firmware number or HIF context invalid");
+            return -1;
         }
-        else
+
+        fw_full_path = hif_mngent->fw_full_path[firmware_no];
+        if (fw_full_path == NULL)
         {
-            LOG_D("FW1 Ver: %d.%d.%d.%d, size:%dBytes",
-                  fw_head.version & 0xFF, (fw_head.version >> 8) & 0xFF,
-                  (fw_head.version >> 16) & 0xFF, (fw_head.version >> 24) & 0xFF,
-                  fw_head.length);
-            fw_head.length -= 32;
-            firmware_info->fw1_size = fw_head.length;
-            firmware_info->fw1 = zt_kzalloc(fw_head.length);
-            if (NULL == firmware_info->fw1)
-            {
-                LOG_E("firmware1 zt_kzalloc failed");
-                zt_os_api_file_close(file);
-                return -3;
-            }
-            zt_os_api_file_read(file, fw_head.offset + 32, (zt_u8 *)firmware_info->fw1,
-                                fw_head.length);
+            LOG_E("firmware path is NULL");
+            return -1;
         }
-        pos += sizeof(fw_head);
+
+        LOG_I("download firmware fullpath:%s", fw_full_path);
+        file = zt_os_api_file_open((const zt_s8 *)fw_full_path);
+        if (file == NULL)
+        {
+            LOG_E("firmware open failed");
+            return -2;
+        }
+
+        file_size = zt_os_api_file_size(file);
+        if (file_size < (loff_t)sizeof(file_header))
+        {
+            LOG_E("firmware file size invalid: %lld", file_size);
+            goto firmware_file_fail;
+        }
+
+        if (!hif_firmware_file_read_exact(file, 0, &file_header,
+                                           sizeof(file_header)))
+        {
+            LOG_E("short read of firmware file header");
+            goto firmware_file_fail;
+        }
+
+        if (file_header.magic_number != 0xaffa ||
+            file_header.interface_type != 0x9188 ||
+            file_header.firmware_num != 2)
+        {
+            LOG_E("firmware format invalid: magic=0x%x type=0x%x entries=%u",
+                  file_header.magic_number, file_header.interface_type,
+                  file_header.firmware_num);
+            goto firmware_file_fail;
+        }
+
+        pos = sizeof(file_header);
+        table_end = pos + (loff_t)file_header.firmware_num *
+                    (loff_t)sizeof(fw_header);
+        if (table_end < pos || table_end > file_size)
+        {
+            LOG_E("firmware header table exceeds file size");
+            goto firmware_file_fail;
+        }
+
+        firmware_info->fw_rom_type = file_header.rom_type;
+
+        for (i = 0; i < file_header.firmware_num; i++)
+        {
+            zt_u32 payload_offset;
+            zt_u32 payload_length;
+            zt_s8 **payload;
+            zt_u32 *payload_size;
+
+            zt_memset(&fw_header, 0, sizeof(fw_header));
+            if (!hif_firmware_file_read_exact(file, pos, &fw_header,
+                                               sizeof(fw_header)))
+            {
+                LOG_E("short read of firmware entry %u", i);
+                goto firmware_file_fail;
+            }
+            pos += sizeof(fw_header);
+
+            if (fw_header.type == 0)
+            {
+                if (have_fw0)
+                {
+                    LOG_E("duplicate FW0 firmware entry");
+                    goto firmware_file_fail;
+                }
+                have_fw0 = zt_true;
+                payload_offset = fw_header.offset;
+                payload_length = fw_header.length;
+                payload = &firmware_info->fw0;
+                payload_size = &firmware_info->fw0_size;
+            }
+            else if (fw_header.type == 1)
+            {
+                if (have_fw1 || fw_header.length < 32)
+                {
+                    LOG_E("duplicate or undersized FW1 firmware entry");
+                    goto firmware_file_fail;
+                }
+                have_fw1 = zt_true;
+                payload_offset = fw_header.offset + 32;
+                payload_length = fw_header.length - 32;
+                payload = &firmware_info->fw1;
+                payload_size = &firmware_info->fw1_size;
+            }
+            else
+            {
+                LOG_E("unsupported firmware entry type: %u", fw_header.type);
+                goto firmware_file_fail;
+            }
+
+            if (fw_header.offset < (zt_u32)table_end ||
+                fw_header.offset > (zt_u64)file_size ||
+                fw_header.length > (zt_u64)file_size - fw_header.offset ||
+                payload_length == 0 || payload_length > INT_MAX ||
+                payload_offset > (zt_u64)file_size ||
+                payload_length > (zt_u64)file_size - payload_offset)
+            {
+                LOG_E("firmware entry %u has invalid offset/length", i);
+                goto firmware_file_fail;
+            }
+
+            *payload = (zt_s8 *)vzalloc(payload_length);
+            if (*payload == NULL)
+            {
+                LOG_E("firmware payload allocation failed: %u bytes",
+                      payload_length);
+                ret = -3;
+                goto firmware_file_fail;
+            }
+
+            if (!hif_firmware_file_read_exact(file, payload_offset, *payload,
+                                               payload_length))
+            {
+                LOG_E("short read of firmware payload type %u", fw_header.type);
+                goto firmware_file_fail;
+            }
+
+            *payload_size = payload_length;
+        }
+
+        if (!have_fw0 || !have_fw1)
+        {
+            LOG_E("firmware file is missing FW0 or FW1");
+            goto firmware_file_fail;
+        }
+
+        zt_os_api_file_close(file);
+        return 0;
+
+firmware_file_fail:
+        zt_os_api_file_close(file);
+        hif_firmware_read_free(firmware_info);
+        return ret;
     }
-    zt_os_api_file_close(file);
 #else
     const uint8_t *fw_data;
     zt_s32 i;
@@ -421,6 +529,12 @@ int hif_firmware_read_get(zt_u8 firmware_no,
         }
         pos += sizeof(fw_head);
     }
+    if (firmware_info->fw0 == NULL || firmware_info->fw1 == NULL ||
+        firmware_info->fw0_size == 0 || firmware_info->fw1_size == 0)
+    {
+        zt_memset(firmware_info, 0, sizeof(*firmware_info));
+        return -2;
+    }
 #endif
 
     return 0;
@@ -428,13 +542,16 @@ int hif_firmware_read_get(zt_u8 firmware_no,
 
 void hif_firmware_read_free(struct hif_firmware_info *firmware_info)
 {
-    firmware_info->fw_rom_type = 0;
-    firmware_info->fw0_size = 0;
-    firmware_info->fw1_size = 0;
+    if (firmware_info == NULL)
+    {
+        return;
+    }
+
 #ifdef CONFIG_FW_FILE
-    zt_kfree(firmware_info->fw0);
-    zt_kfree(firmware_info->fw1);
+    vfree(firmware_info->fw0);
+    vfree(firmware_info->fw1);
 #endif
+    zt_memset(firmware_info, 0, sizeof(*firmware_info));
 }
 
 static zt_s32 __init hif_init(void)
@@ -472,22 +589,26 @@ static zt_s32 __init hif_init(void)
     }
     else
     {
-        gl_hif->cfg_size = zt_os_api_file_size(file);
-        if (gl_hif->cfg_size <= 0)
         {
-            gl_hif->cfg_size = 0;
-            gl_hif->cfg_content = NULL;
-        }
-        else
-        {
-            gl_hif->cfg_content = zt_kzalloc(gl_hif->cfg_size);
-            if (gl_hif->cfg_content == NULL)
+            loff_t cfg_file_size = zt_os_api_file_size(file);
+
+            if (cfg_file_size <= 0 || cfg_file_size > 0xffffffffULL)
             {
                 gl_hif->cfg_size = 0;
+                gl_hif->cfg_content = NULL;
             }
             else
             {
-                zt_os_api_file_read(file, 0, gl_hif->cfg_content, gl_hif->cfg_size);
+                gl_hif->cfg_size = (zt_u32)cfg_file_size;
+                gl_hif->cfg_content = zt_kzalloc(gl_hif->cfg_size);
+                if (gl_hif->cfg_content == NULL ||
+                    zt_os_api_file_read(file, 0, (zt_u8 *)gl_hif->cfg_content,
+                                        gl_hif->cfg_size) != (zt_s32)gl_hif->cfg_size)
+                {
+                    zt_kfree(gl_hif->cfg_content);
+                    gl_hif->cfg_content = NULL;
+                    gl_hif->cfg_size = 0;
+                }
             }
         }
 

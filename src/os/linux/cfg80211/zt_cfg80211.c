@@ -861,6 +861,7 @@ void zt_cfg80211_wiphy_free(nic_info_st *pnic_info)
     }
 
     wiphy_free(pwiphy);
+    pnic_info->pwiphy = NULL;
 }
 
 void zt_cfg80211_widev_free(nic_info_st *pnic_info)
@@ -875,7 +876,12 @@ void zt_cfg80211_widev_free(nic_info_st *pnic_info)
     pwidev = pnic_info->pwidev;
     if (pwidev)
     {
+        if (pnic_info->ndev && pnic_info->ndev->ieee80211_ptr == pwidev)
+        {
+            pnic_info->ndev->ieee80211_ptr = NULL;
+        }
         zt_kfree(pwidev);
+        pnic_info->pwidev = NULL;
     }
 }
 
@@ -4356,6 +4362,7 @@ zt_s32 zt_cfg80211_alloc(nic_info_st *pnic_info)
     if (wiphy_cfg(pwiphy))
     {
         CFG80211_WARN("wiphy config fail !!");
+        wiphy_free(pwiphy);
         return -2;
     }
     set_wiphy_dev(pwiphy, pnic_info->dev);
@@ -4367,6 +4374,7 @@ zt_s32 zt_cfg80211_alloc(nic_info_st *pnic_info)
     if (NULL == pwidev)
     {
         CFG80211_INFO("allocate wireless device fail !!");
+        wiphy_free(pwiphy);
         return -3;
     }
     pwidev->wiphy           = pwiphy;

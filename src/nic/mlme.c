@@ -658,6 +658,22 @@ core_conn_maintain_scan_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
     PT_END(pt);
 }
 
+static void keepalive_probe_rsp_drain(zt_msg_que_t *pmsg_que)
+{
+    zt_msg_t *pmsg;
+
+    /*
+     * Multiple probe responses may be queued before the MLME worker gets
+     * scheduled. They belong to this directed scan and must not satisfy a
+     * later keepalive attempt.
+     */
+    while (!zt_msg_get(pmsg_que, &pmsg) &&
+            pmsg->tag == ZT_MLME_TAG_SCAN_RSP)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+    }
+}
+
 static zt_pt_ret_t
 core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
                               zt_s32 *prsn)
@@ -678,6 +694,8 @@ core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
         *prsn = ZT_KEEPALIVE_PROBE_FAILED;
         PT_EXIT(pt);
     }
+
+    keepalive_probe_rsp_drain(pmsg_que);
 
     {
         zt_wlan_ssid_t ssid = {0};
@@ -717,6 +735,7 @@ core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
                     zt_scan_stop(pnic_info);
                     PT_WAIT_THREAD(pt, zt_scan_thrd(pt_sub, pnic_info,
                                                     &scan_reason));
+                    keepalive_probe_rsp_drain(pmsg_que);
                     break;
                 }
             }
@@ -778,6 +797,7 @@ core_conn_maintain_probe_thrd(zt_pt_t *pt, nic_info_st *pnic_info,
 
     if (response_received)
     {
+        keepalive_probe_rsp_drain(pmsg_que);
         *prsn = ZT_KEEPALIVE_PROBE_RESPONDED;
     }
     else if (scan_reason == ZT_SCAN_TAG_DONE)

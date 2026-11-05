@@ -303,7 +303,7 @@ init_fail:
 #endif
     if (hardware_ready) prv_hardware_term(pnic_info);
     pnic_info->is_init_commplete = zt_false;
-    ret = ZT_RETURN_FAIL;
+    return ZT_RETURN_FAIL;
 }
 
 
@@ -496,8 +496,6 @@ zt_s32 nic_suspend(nic_info_st *pnic_info)
 }
 
 
-
-
 zt_s32 nic_resume(nic_info_st *pnic_info)
 {
     LOG_D("[NIC] nic_resume - begin");
@@ -557,8 +555,6 @@ zt_s32 nic_resume(nic_info_st *pnic_info)
 
     return ZT_RETURN_OK;
 }
-
-
 
 
 zt_s32 nic_shutdown(nic_info_st *pnic_info)

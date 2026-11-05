@@ -751,7 +751,11 @@ zt_s32 zt_data_queue_mngt_init(void *hif_node)
         if (NULL == hif_info->u.sdio.tx_agg_buffer)
         {
             LOG_E("[%s] tx_agg_buffer failed", __func__);
-            return 0;
+            zt_que_deinit(&data_queue_mngt->free_rx_queue);
+            zt_que_deinit(&data_queue_mngt->free_tx_queue);
+            zt_que_deinit(&data_queue_mngt->tx_queue);
+            zt_os_api_lock_term(&data_queue_mngt->queu_txop_lock);
+            return ZT_RETURN_FAIL;
         }
         hif_info->u.sdio.free_tx_page = 0;
     }

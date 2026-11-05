@@ -878,6 +878,8 @@ zt_s32 ndev_register(nic_info_st *pnic_info)
     if (ret)
     {
         NDEV_WARN("nl80211 device alloc fail [ret:%d]", ret);
+        free_netdev(pndev);
+        pnic_info->ndev = NULL;
         return ret;
     }
 
@@ -887,6 +889,10 @@ zt_s32 ndev_register(nic_info_st *pnic_info)
     if (ret)
     {
         NDEV_WARN("nl80211 wiphy regiest fail [ret:%d]", ret);
+        zt_cfg80211_widev_free(pnic_info);
+        zt_cfg80211_wiphy_free(pnic_info);
+        free_netdev(pndev);
+        pnic_info->ndev = NULL;
         return ret;
     }
 #endif

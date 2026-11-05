@@ -3832,7 +3832,7 @@ static zt_s32 cfg80211_change_beacon(struct wiphy *wiphy,
     CFG80211_DBG("mac addr: "ZT_MAC_FMT, ZT_MAC_ARG(nic_to_local_addr(pnic_info)));
 
     ret =
-        add_beacon(pnic_info, 
+        add_beacon(pnic_info,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0))
 		   info->beacon.head, info->beacon.head_len, info->beacon.tail,
                    info->beacon.tail_len

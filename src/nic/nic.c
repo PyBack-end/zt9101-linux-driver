@@ -32,207 +32,28 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     pnic_info->is_driver_critical = zt_false;
 
     /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
+    tx_ready = zt_true;
     if (zt_tx_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
+        return ZT_RETURN_FAIL;
     }
-    tx_ready = zt_true;
 
     /* rx init */
-    if (    rx_ready = zt_true;
-zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
+    rx_ready = zt_true;
     if (zt_rx_init(pnic_info))
     {
         LOG_E("===>zt_rx_init error");
-        goto init_fail;
+        return ZT_RETURN_FAIL;
     }
-    rx_ready = zt_true;
 
     /* local info init */
-    if (    local_ready = zt_true;
-zt_local_cfg_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_local_cfg_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (    rx_ready = zt_true;
-zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-    rx_ready = zt_true;
-
-    /* local info init */
+    local_ready = zt_true;
     if (zt_local_cfg_init(pnic_info) < 0)
     {
         LOG_E("===>zt_local_cfg_init error");
-        goto init_fail;
+        return ZT_RETURN_FAIL;
     }
-    local_ready = zt_true;
 
     /* get local default cfg */
     if (zt_local_cfg_get_default(pnic_info) < 0)
@@ -242,243 +63,12 @@ static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
     }
 
     /* hw info init */
-    if (    hw_ready = zt_true;
-zt_hw_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_hw_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (    rx_ready = zt_true;
-zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-    rx_ready = zt_true;
-
-    /* local info init */
-    if (    local_ready = zt_true;
-zt_local_cfg_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_local_cfg_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (    rx_ready = zt_true;
-zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (    tx_ready = zt_true;
-zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-static zt_s32 prv_hardware_init(nic_info_st *pnic_info)
-{
-    zt_s32 ret = 0;
-    zt_bool tx_ready = zt_false;
-    zt_bool rx_ready = zt_false;
-    zt_bool local_ready = zt_false;
-    zt_bool hw_ready = zt_false;
-
-    LOG_D("[NIC] prv_hardware_init - entry");
-
-    pnic_info->is_driver_stopped = zt_false;
-    pnic_info->is_surprise_removed = zt_false;
-    pnic_info->is_driver_critical = zt_false;
-
-    /* tx init */
-    if (zt_tx_info_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_tx_info_init error");
-        goto init_fail;
-    }
-    tx_ready = zt_true;
-
-    /* rx init */
-    if (zt_rx_init(pnic_info))
-    {
-        LOG_E("===>zt_rx_init error");
-        goto init_fail;
-    }
-    rx_ready = zt_true;
-
-    /* local info init */
-    if (zt_local_cfg_init(pnic_info) < 0)
-    {
-        LOG_E("===>zt_local_cfg_init error");
-        goto init_fail;
-    }
-    local_ready = zt_true;
-
-    /* get local default cfg */
-    if (zt_local_cfg_get_default(pnic_info) < 0)
-    {
-        LOG_E("===>zt_local_cfg_get_default error");
-        goto init_fail;
-    }
-
-    /* hw info init */
+    hw_ready = zt_true;
     if (zt_hw_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_hw_info_init error");
-        goto init_fail;
+        return ZT_RETURN_FAIL;
     }
-    hw_ready = zt_true;
 
     /* get hw default cfg */
     if (zt_hw_info_get_default_cfg(pnic_info) < 0)
@@ -529,7 +119,7 @@ static zt_s32 prv_hardware_term(nic_info_st *pnic_info)
     if (zt_rx_term(pnic_info) < 0)
     {
         LOG_E("===>zt_rx_term error");
-        return ZT_RETURN_FAIL;
+        ret = ZT_RETURN_FAIL;
     }
 
     /* tx term */
@@ -593,12 +183,11 @@ zt_s32 nic_init(nic_info_st *pnic_info)
         LOG_E("===>prv_hardware_init error");
         goto init_fail;
     }
-    hardware_ready = zt_true;
 
     /*p2p*/
 #ifdef ZT_CONFIG_P2P
-    if (    p2p_ready = zt_true;
-zt_p2p_init(pnic_info) < 0)
+    p2p_ready = zt_true;
+    if (zt_p2p_init(pnic_info) < 0)
     {
         LOG_E("===>zt_p2p_init error");
         goto init_fail;
@@ -606,8 +195,8 @@ zt_p2p_init(pnic_info) < 0)
 #endif
 
 #ifdef CFG_ENABLE_ADHOC_MODE
-    if (    adhoc_ready = zt_true;
-zt_adhoc_init(pnic_info) < 0)
+    adhoc_ready = zt_true;
+    if (zt_adhoc_init(pnic_info) < 0)
     {
         LOG_E("===>zt_adhoc_init error");
         goto init_fail;
@@ -615,56 +204,56 @@ zt_adhoc_init(pnic_info) < 0)
 #endif
 
     /*wdn init*/
-    if (    wdn_ready = zt_true;
-zt_wdn_init(pnic_info) < 0)
+    wdn_ready = zt_true;
+    if (zt_wdn_init(pnic_info) < 0)
     {
         LOG_E("===>zt_wdn_init error");
         goto init_fail;
     }
 
     /* scan init */
-    if (    scan_ready = zt_true;
-zt_scan_init(pnic_info) < 0)
+    scan_ready = zt_true;
+    if (zt_scan_init(pnic_info) < 0)
     {
         LOG_E("===>zt_scan_info_init error");
         goto init_fail;
     }
 
     /* auth init */
-    if (    auth_ready = zt_true;
-zt_auth_init(pnic_info) < 0)
+    auth_ready = zt_true;
+    if (zt_auth_init(pnic_info) < 0)
     {
         LOG_E("===>zt_auth_init error");
         goto init_fail;
     }
 
     /* assoc init */
-    if (    assoc_ready = zt_true;
-zt_assoc_init(pnic_info) < 0)
+    assoc_ready = zt_true;
+    if (zt_assoc_init(pnic_info) < 0)
     {
         LOG_E("===>zt_assoc_init error");
         goto init_fail;
     }
 
     /* sec init */
-    if (    sec_ready = zt_true;
-zt_sec_info_init(pnic_info) < 0)
+    sec_ready = zt_true;
+    if (zt_sec_info_init(pnic_info) < 0)
     {
         LOG_E("===>zt_sec_info_init error");
         goto init_fail;
     }
 
     /* pwr_info init  */
-    if (    lps_ready = zt_true;
-zt_lps_init(pnic_info) < 0)
+    lps_ready = zt_true;
+    if (zt_lps_init(pnic_info) < 0)
     {
         LOG_E("===>zt_lps_init error");
         goto init_fail;
     }
 
     /* wlan init */
-    if (    wlan_ready = zt_true;
-zt_wlan_mgmt_init(pnic_info) < 0)
+    wlan_ready = zt_true;
+    if (zt_wlan_mgmt_init(pnic_info) < 0)
     {
         LOG_E("===>zt_wlan_init error");
         goto init_fail;
@@ -672,8 +261,8 @@ zt_wlan_mgmt_init(pnic_info) < 0)
 
 #ifdef CFG_ENABLE_AP_MODE
     /* ap init */
-    if (    ap_ready = zt_true;
-zt_ap_init(pnic_info) < 0)
+    ap_ready = zt_true;
+    if (zt_ap_init(pnic_info) < 0)
     {
         LOG_E("===>zt_ap_init error");
         goto init_fail;
@@ -681,8 +270,8 @@ zt_ap_init(pnic_info) < 0)
 #endif
 
     /* mlme init */
-    if (    mlme_ready = zt_true;
-zt_mlme_init(pnic_info) < 0)
+    mlme_ready = zt_true;
+    if (zt_mlme_init(pnic_info) < 0)
     {
         LOG_E("===>zt_mlme_init error");
         goto init_fail;
@@ -694,7 +283,6 @@ zt_mlme_init(pnic_info) < 0)
     return ZT_RETURN_OK;
 
 init_fail:
-    /* Reverse only subsystems whose initialization completed successfully. */
     if (mlme_ready) zt_mlme_term(pnic_info);
 #ifdef CFG_ENABLE_AP_MODE
     if (ap_ready) zt_ap_term(pnic_info);
@@ -908,7 +496,6 @@ zt_s32 nic_suspend(nic_info_st *pnic_info)
     return ZT_RETURN_OK;
 }
 
-
 zt_s32 nic_resume(nic_info_st *pnic_info)
 {
     LOG_D("[NIC] nic_resume - begin");
@@ -968,7 +555,6 @@ zt_s32 nic_resume(nic_info_st *pnic_info)
 
     return ZT_RETURN_OK;
 }
-
 
 zt_s32 nic_shutdown(nic_info_st *pnic_info)
 {

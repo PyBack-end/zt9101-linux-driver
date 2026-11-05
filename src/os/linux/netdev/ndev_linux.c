@@ -894,6 +894,7 @@ zt_s32 ndev_register(nic_info_st *pnic_info)
         zt_cfg80211_wiphy_free(pnic_info);
         free_netdev(pndev);
         pnic_info->ndev = NULL;
+        pnic_info->widev_priv = NULL;
         return ret;
     }
 #endif

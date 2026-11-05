@@ -27,58 +27,15 @@
 
 
 zt_s32 zt_adhoc_bcn_msg_send(nic_info_st *pnic_info, zt_80211_mgmt_t *pmgmt,
-                             zt_u16 mgmt_len)
+                             zt_u16 mgmt_len);
+zt_s32 mlme_set_connect(nic_info_st *pnic_info, zt_bool bconnect);
+
+zt_bool zt_get_adhoc_master(nic_info_st *pnic_info)
 {
-    mlme_info_t *pmlme_info;
-    zt_msg_que_t *pmsg_que;
-    zt_msg_t *pmsg;
-    zt_s32 rst;
-
-    if (pnic_info == NULL || pmgmt == NULL || mgmt_len == 0 ||
-            ZT_CANNOT_RUN(pnic_info))
-    {
-        return -1;
-    }
-
-    if (!pnic_info->is_up)
-    {
-        return -2;
-    }
-
-    pmlme_info = pnic_info->mlme_info;
-    if (pmlme_info == NULL)
-    {
-        return -1;
-    }
-    pmsg_que = &pmlme_info->msg_que;
-
-    ADHOC_DBG();
-
-    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
-    if (rst)
-    {
-        ADHOC_WARN("msg new fail error fail: %d", rst);
-        return -3;
-    }
-    if (mgmt_len > pmsg->alloc_value_size)
-    {
-        zt_msg_del(pmsg_que, pmsg);
-        ADHOC_WARN("beacon frame exceeds message capacity");
-        return -4;
-    }
-
-    pmsg->len = mgmt_len;
-    zt_memcpy(pmsg->value, pmgmt, mgmt_len);
-    rst = zt_msg_push(pmsg_que, pmsg);
-    if (rst)
-    {
-        zt_msg_del(pmsg_que, pmsg);
-        ADHOC_WARN("msg push fail error fail: %d", rst);
-        return -5;
-    }
-
-    return 0;
+    zt_adhoc_info_t *adhoc_info = (zt_adhoc_info_t *)pnic_info->adhoc_info;
+    return adhoc_info->adhoc_master;
 }
+
 zt_bool zt_set_adhoc_master(nic_info_st *pnic_info, zt_bool status)
 {
     zt_adhoc_info_t *adhoc_info = (zt_adhoc_info_t *)pnic_info->adhoc_info;
@@ -912,9 +869,13 @@ zt_s32 zt_adhoc_leave_ibss_msg_send(nic_info_st *pnic_info)
 zt_s32 zt_adhoc_bcn_msg_send(nic_info_st *pnic_info, zt_80211_mgmt_t *pmgmt,
                              zt_u16 mgmt_len)
 {
-    mlme_info_t *pmlme_info = pnic_info->mlme_info;
+    mlme_info_t *pmlme_info;
+    zt_msg_que_t *pmsg_que;
+    zt_msg_t *pmsg;
+    zt_s32 rst;
 
-    if (pnic_info == NULL || ZT_CANNOT_RUN(pnic_info))
+    if (pnic_info == NULL || pmgmt == NULL || mgmt_len == 0 ||
+            ZT_CANNOT_RUN(pnic_info))
     {
         return -1;
     }
@@ -924,33 +885,40 @@ zt_s32 zt_adhoc_bcn_msg_send(nic_info_st *pnic_info, zt_80211_mgmt_t *pmgmt,
         return -2;
     }
 
+    pmlme_info = pnic_info->mlme_info;
+    if (pmlme_info == NULL)
+    {
+        return -1;
+    }
+    pmsg_que = &pmlme_info->msg_que;
+
     ADHOC_DBG();
 
-    /* new message information */
+    rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
+    if (rst)
     {
-        zt_msg_que_t *pmsg_que = &pmlme_info->msg_que;
-        zt_msg_t *pmsg;
-        zt_s32 rst;
+        ADHOC_WARN("msg new fail error fail: %d", rst);
+        return -3;
+    }
+    if (mgmt_len > pmsg->alloc_value_size)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+        ADHOC_WARN("beacon frame exceeds message capacity");
+        return -4;
+    }
 
-        rst = zt_msg_new(pmsg_que, ZT_MLME_TAG_IBSS_BEACON_FRAME, &pmsg);
-        if (rst)
-        {
-            ADHOC_WARN("msg new fail error fail: %d", rst);
-            return -3;
-        }
-        pmsg->len = mgmt_len;
-        zt_memcpy(pmsg->value, pmgmt, mgmt_len);
-        rst = zt_msg_push(pmsg_que, pmsg);
-        if (rst)
-        {
-            ADHOC_WARN("msg push fail error fail: %d", rst);
-            return -4;
-        }
+    pmsg->len = mgmt_len;
+    zt_memcpy(pmsg->value, pmgmt, mgmt_len);
+    rst = zt_msg_push(pmsg_que, pmsg);
+    if (rst)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+        ADHOC_WARN("msg push fail error fail: %d", rst);
+        return -5;
     }
 
     return 0;
 }
-
 zt_s32 zt_adhoc_init(nic_info_st *pnic_info)
 {
     zt_adhoc_info_t *adhoc_info;

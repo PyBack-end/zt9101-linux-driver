@@ -1566,6 +1566,12 @@ static zt_s32 mlme_msg_send(nic_info_st *pnic_info,
     }
     if (value && len)
     {
+        if (len > pmsg->alloc_value_size)
+        {
+            zt_msg_del(pmsg_que, pmsg);
+            MLME_WARN("message length exceeds allocated capacity");
+            return -4;
+        }
         pmsg->len = len;
         zt_memcpy(pmsg->value, value, len);
     }
@@ -1713,7 +1719,7 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
     zt_msg_t *pmsg;
     zt_s32 rst;
 
-    if (pnic_info == NULL || (pmgmt == NULL && mgmt_len == 0))
+    if (pnic_info == NULL || pmgmt == NULL || mgmt_len == 0)
     {
         return -1;
     }
@@ -1740,6 +1746,12 @@ zt_s32 zt_mlme_conn_scan_rsp(nic_info_st *pnic_info,
         return -4;
     }
     /* copy frame */
+    if (mgmt_len > pmsg->alloc_value_size)
+    {
+        zt_msg_del(pmsg_que, pmsg);
+        MLME_WARN("scan response exceeds message capacity");
+        return -5;
+    }
     pmsg->len = mgmt_len;
     zt_memcpy(pmsg->value, pmgmt, mgmt_len);
     rst = zt_msg_push(pmsg_que, pmsg);

@@ -799,6 +799,12 @@ zt_s32 zt_data_queue_mngt_init(void *hif_node)
                 0 != hif_info->ops->hif_alloc_buff(recv_node))
         {
             LOG_E("[%s] receive buffer allocation failed at %d", __func__, i);
+            /* The failed node is not on free_rx_queue, so release any
+             * transport resources allocated before the callback failed. */
+            if (hif_info->ops->hif_free_buff)
+            {
+                hif_info->ops->hif_free_buff(recv_node);
+            }
             goto init_fail;
         }
         zt_enque_tail(&recv_node->node, &data_queue_mngt->free_rx_queue);
@@ -822,6 +828,12 @@ zt_s32 zt_data_queue_mngt_init(void *hif_node)
                 0 != hif_info->ops->hif_alloc_buff(send_node))
         {
             LOG_E("[%s] transmit buffer allocation failed at %d", __func__, i);
+            /* The failed node is not on free_tx_queue, so release any
+             * transport resources allocated before the callback failed. */
+            if (hif_info->ops->hif_free_buff)
+            {
+                hif_info->ops->hif_free_buff(send_node);
+            }
             goto init_fail;
         }
         zt_enque_tail(&send_node->node, &data_queue_mngt->free_tx_queue);

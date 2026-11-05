@@ -928,7 +928,7 @@ DEV_REINSERT:
             goto DEV_REINSERT;
         } else {
             LOG_E("===>zt_fw_download error, exit!!");
-            return ZT_RETURN_FAIL;
+            goto insert_fail;
         }
     }
 
@@ -973,7 +973,10 @@ DEV_REINSERT:
 insert_fail:
     /* Tear down only stages that reached their initialized state. */
     hif_info->dev_removed = zt_true;
-    zt_hif_bulk_cmd_post_exit(hif_info);
+    if (hif_info->bulk_enable)
+    {
+        zt_hif_bulk_cmd_post_exit(hif_info);
+    }
     if (hif_info->trx_pipe.is_init)
     {
         zt_hif_queue_disable(hif_info);

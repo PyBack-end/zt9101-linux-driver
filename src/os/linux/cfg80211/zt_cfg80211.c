@@ -4375,6 +4375,7 @@ zt_s32 zt_cfg80211_alloc(nic_info_st *pnic_info)
     {
         CFG80211_INFO("allocate wireless device fail !!");
         wiphy_free(pwiphy);
+        pnic_info->pwiphy = NULL;
         return -3;
     }
     pwidev->wiphy           = pwiphy;

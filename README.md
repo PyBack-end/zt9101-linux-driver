@@ -12,6 +12,42 @@ There is no driver for this chip in the mainline kernel. This is ZTop's vendor d
 (via the community forks credited below) with the fixes needed for modern kernels, DKMS
 packaging, and an installer.
 
+## How it works
+
+The driver connects the ZT9101 USB adapter to the Linux kernel's wireless networking
+stack. It translates between the kernel's networking and Wi-Fi control interfaces and
+the commands, events, and data transfers understood by the adapter.
+
+At a high level, the lifecycle is:
+
+1. **USB detection:** When the adapter is plugged in, the USB subsystem matches its
+   vendor/product ID against the driver's device table and calls the driver's probe
+   routine.
+2. **Device initialization:** The driver initializes its USB endpoints and internal
+   state, prepares its queues and buffers, and loads the device firmware where required.
+3. **Kernel registration:** The driver registers the wireless device and its network
+   interface with the Linux wireless stack. The interface then appears in tools such as
+   `ip`, `iw`, and NetworkManager.
+4. **Scanning and connection:** NetworkManager or another userspace network manager
+   requests scans and connection changes through the kernel wireless APIs. The driver
+   passes the relevant operations to the adapter and reports results back to the kernel.
+5. **Data transmission and reception:** Outgoing network packets are queued by the
+   driver and submitted to the adapter over USB. Received USB data is processed and
+   delivered back into the Linux networking stack.
+6. **Disconnect and cleanup:** When the adapter is unplugged or the driver is removed,
+   the driver stops transfers, releases queues and buffers, unregisters the network
+   interface, and frees its USB resources.
+
+The driver does not manage Wi-Fi credentials or act as a network manager. Those tasks
+belong to userspace software such as NetworkManager and `wpa_supplicant`. The driver
+provides the kernel-level hardware support that allows those services to control the
+adapter and send and receive network traffic.
+
+The adapter is **2.4 GHz 802.11n only**. It provides Wi-Fi connectivity; it does not
+provide Bluetooth, create a network by itself, or guarantee Internet access. Actual
+connectivity depends on a compatible access point, valid network configuration, signal
+quality, and the surrounding network.
+
 ## Status
 
 | Kernel | Distro | Result |

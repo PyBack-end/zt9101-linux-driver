@@ -146,11 +146,12 @@ zt_s32 zt_fw_download(void *node)
                                (zt_u8 *)firmware_info.fw1, firmware_info.fw1_size))
         {
             re_dw_cnt++;
-            if(re_dw_cnt < 3) {
+            if (re_dw_cnt < 3)
+            {
+                hif_firmware_read_free(&firmware_info);
                 goto DW_ALL_FW_FAIL_RETRY;
-            } else {
-                goto DW_ALL_FW_FAIL_RETURN;
             }
+            goto DW_ALL_FW_FAIL_RETURN;
         }
 
         FWDL_DBG("===>fw download elapsed: %d ms", zt_timer_elapsed(&timer));

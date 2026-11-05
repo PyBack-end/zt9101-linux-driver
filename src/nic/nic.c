@@ -173,6 +173,7 @@ zt_s32 nic_init(nic_info_st *pnic_info)
     zt_bool mlme_ready = zt_false;
 
     LOG_D("[NIC] nic_init - start");
+    pnic_info->is_init_cleanup_done = zt_false;
 
     zt_os_api_sema_init(&pnic_info->cmd_sema, 1);
 
@@ -303,6 +304,7 @@ init_fail:
 #endif
     if (hardware_ready) prv_hardware_term(pnic_info);
     pnic_info->is_init_commplete = zt_false;
+    pnic_info->is_init_cleanup_done = zt_true;
     return ZT_RETURN_FAIL;
 }
 
@@ -406,6 +408,7 @@ zt_s32 nic_term(nic_info_st *pnic_info)
         ret = ZT_RETURN_FAIL;
     }
 
+    pnic_info->is_init_cleanup_done = zt_true;
     LOG_D("[NIC] nic_term - end");
     return ret;
 }
